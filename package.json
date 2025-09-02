@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@clerk/nextjs": "^6.31.8",
     "@paper-design/shaders-react": "^0.0.47",
     "@react-three/drei": "^10.7.4",
     "@react-three/fiber": "^9.3.0",

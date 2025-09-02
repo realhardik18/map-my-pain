@@ -93,10 +93,10 @@ export default function LandingPage() {
             transition={{ duration: 0.6, delay: 0.35 }}
           >
             <Link
-              href="/patient/pain-map"
+              href="/patient/log"
               className="inline-flex items-center gap-2 rounded-md bg-[hsl(287,79%,27%)] px-5 py-3 text-base font-medium text-white shadow-[0_8px_24px_rgba(126,34,206,0.25)] hover:opacity-95 transition"
             >
-              Open Pain Map
+              Log Pain
             </Link>
             <Link
               href="/patient"
