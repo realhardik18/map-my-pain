@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
+import { useUser } from '@clerk/nextjs'
 import { Canvas, useThree } from "@react-three/fiber"
 import { OrbitControls, Html } from "@react-three/drei"
 import * as THREE from "three"
@@ -17,6 +18,8 @@ import {
   Loader2,
   Sparkles,
   Undo2,
+  Eye,
+  EyeOff,
 } from "lucide-react"
 
 type SceneHandle = {
@@ -29,6 +32,7 @@ type SceneHandle = {
 type ChatMessage = { role: "user" | "assistant"; text: string }
 
 export default function HumanPage() {
+  const { user } = useUser();
   // Model path state (kept for parity; UI focuses on current default path)
   const [fbxPath] = useState("/models/human.fbx")
 
@@ -54,6 +58,17 @@ export default function HumanPage() {
   // State for info tab hover
   const [showInstructions, setShowInstructions] = useState(false)
 
+  // Pain grades per selected part
+  const [painGrades, setPainGrades] = useState<Record<string, number>>({})
+
+  // CSV visibility state for last sent data
+  const [showCsv, setShowCsv] = useState(false)
+  const [lastCsv, setLastCsv] = useState<string | null>(null)
+
+  // Patient context loading state
+  const [recordLoading, setRecordLoading] = useState(true);
+  const [patientContext, setPatientContext] = useState<any>(null);
+
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     // Auto-scroll chat on new message
@@ -67,74 +82,174 @@ export default function HumanPage() {
     })
   }, [startTransition])
 
+  useEffect(() => {
+    async function fetchRecord() {
+      const patient_email = user?.primaryEmailAddress?.emailAddress;
+      if (!patient_email) return;
+      setRecordLoading(true);
+      try {
+        const res = await fetch(`/api/record?patient_email=${encodeURIComponent(patient_email)}`);
+        if (res.ok) {
+          const records = await res.json();
+          setPatientContext(records?.[0]?.context ?? null);
+        }
+      } catch (err) {
+        // Optionally handle error
+      } finally {
+        setRecordLoading(false);
+      }
+    }
+    if (user) fetchRecord();
+  }, [user]);
+
   const sendChat = useCallback(
     async (text: string) => {
-      if (!text.trim()) return
-      const userMsg: ChatMessage = { role: "user", text: text.trim() }
-      setMessages((prev) => [...prev, userMsg])
-      setChatInput("")
-      setChatLoading(true)
+      if (!text.trim() || recordLoading) return;
+      const userMsg: ChatMessage = { role: "user", text: text.trim() };
+      setMessages((prev) => [...prev, userMsg]);
+      setChatInput("");
+      setChatLoading(true);
       try {
+        const patient_email = user?.primaryEmailAddress?.emailAddress;
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: [...messages, userMsg] }),
-        })
-        const data = await res.json()
+          body: JSON.stringify({ messages: [...messages, userMsg], patient_email }),
+        });
+        const data = await res.json();
         if (data?.text) {
-          setMessages((prev) => [...prev, { role: "assistant", text: data.text }])
+          setMessages((prev) => [...prev, { role: "assistant", text: data.text }]);
         } else {
-          setMessages((prev) => [...prev, { role: "assistant", text: "(No response)" }])
+          setMessages((prev) => [...prev, { role: "assistant", text: "(No response)" }]);
         }
       } catch (err: any) {
-        setMessages((prev) => [...prev, { role: "assistant", text: "Error: " + String(err) }])
+        setMessages((prev) => [...prev, { role: "assistant", text: "Error: " + String(err) }]);
       } finally {
-        setChatLoading(false)
+        setChatLoading(false);
       }
     },
-    [messages],
+    [messages, user, recordLoading],
   )
 
-  const addSelectedToChat = useCallback(() => {
+  // When selection changes, ensure painGrades has defaults for new selections
+  useEffect(() => {
+    setPainGrades((prev) => {
+      const next = { ...prev }
+      for (const name of selected) {
+        if (typeof next[name] !== "number") next[name] = 5 // default pain grade
+      }
+      // Remove grades for deselected parts
+      Object.keys(next).forEach((k) => {
+        if (!selected.has(k)) delete next[k]
+      })
+      return next
+    })
+  }, [selected])
+
+  // Update chat logging to send only CSV to agent, but show toggle in UI
+  const addSelectedToChat = useCallback(async () => {
     const parts = Array.from(selected)
     if (parts.length === 0) return
-    sendChat(`Selected parts: ${parts.join(", ")}`)
-  }, [selected, sendChat])
 
-  // Keyboard shortcuts
-  // useEffect(() => {
-  //   const onKey = (e: KeyboardEvent) => {
-  //     const k = e.key.toLowerCase()
-  //     if (k === "h") {
-  //       if (selected.size > 0) {
-  //         setHighlighted((prev) => {
-  //           const next = new Set(prev)
-  //           for (const name of selected) {
-  //             if (next.has(name)) next.delete(name)
-  //             else next.add(name)
-  //           }
-  //           return next
-  //         })
-  //       }
-  //     } else if (k === "c") {
-  //       setHighlighted(new Set())
-  //     } else if (k === "f") {
-  //       sceneRef.current?.frameByNames(Array.from(selected))
-  //     }
-  //   }
-  //   window.addEventListener("keydown", onKey)
-  //   return () => window.removeEventListener("keydown", onKey)
-  // }, [selected])
+    // capture initial selection snapshot
+    const initialSelection = parts.slice()
+    console.log("initialSelection", initialSelection)
 
-  const filteredNames = useMemo(() => {
-    const s = search.trim().toLowerCase()
-    if (!s) return meshNames
-    return meshNames.filter((n) => n.toLowerCase().includes(s))
-  }, [meshNames, search])
+    // Prepare CSV: part,pain
+    const csv = "part,pain\n" + initialSelection.map((name) => `"${name.replace(/"/g, '""')}",${painGrades[name] ?? 5}`).join("\n")
+    setLastCsv(csv)
+    setShowCsv(false)
+
+    // Build mesh highlights array: { mesh_id, score }
+    const mesh_highlights = initialSelection.map((name) => ({ mesh_id: name, score: painGrades[name] ?? 5 }))
+
+    // Build body_parts array (keeps parity with existing log schema)
+    const body_parts = initialSelection.map((name) => ({ part: name, pain: painGrades[name] ?? 5 }))
+
+    // Patient email from client-side user object
+    const patient_email = (user as any)?.primaryEmailAddress?.emailAddress ?? null
+
+    // Log payload
+    const payload = {
+      patient_email,
+      timestamp: new Date().toISOString(),
+      body_parts,
+      mesh_highlights,
+    }
+
+    // Post to /api/log so server saves the log with email and mesh highlights
+    try {
+      const res = await fetch('/api/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (res.ok) {
+        setMessages((prev) => [...prev, { role: 'assistant', text: 'Issue has been logged!' }])
+      } else {
+        const errText = await res.text()
+        setMessages((prev) => [...prev, { role: 'assistant', text: `Logging failed: ${errText}` }])
+      }
+    } catch (err: any) {
+      setMessages((prev) => [...prev, { role: 'assistant', text: 'Logging error: ' + String(err) }])
+    }
+
+    // Still send CSV to the chat agent
+    sendChat(csv)
+  }, [selected, painGrades, sendChat, user, setMessages])
+
+  const messagesClass = "max-w-[85%] rounded-md px-3 py-2 text-sm"
+  const userMessageClass = "bg-zinc-900 border border-zinc-800 self-end ml-auto"
+  const assistantMessageClass = "bg-violet-600 text-white font-medium"
+
+  // Selected mesh list with pain grade slider
+  const SelectedMeshList = useMemo(
+    () =>
+      selected.size === 0 ? (
+        <div className="p-4 text-sm text-zinc-400">No parts selected.</div>
+      ) : (
+        <ul className="divide-y divide-zinc-800" role="list" aria-label="Selected mesh list">
+          {Array.from(selected).map((name) => (
+            <li key={name} className="flex items-center justify-between gap-3 p-2">
+              <span className="flex-1 text-left text-sm truncate rounded px-2 py-1 font-semibold text-violet-400 bg-zinc-900">{name}</span>
+              {/* Pain grade slider */}
+              <input
+                type="range"
+                min={0}
+                max={10}
+                step={0.1}
+                value={painGrades[name] ?? 5}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value)
+                  setPainGrades((prev) => ({ ...prev, [name]: val }))
+                }}
+                className="mx-2 w-24 accent-red-500"
+                title="Pain grade"
+              />
+              <span className="text-xs text-zinc-300 w-8 text-center">{(painGrades[name] ?? 5).toFixed(1)}</span>
+              <button
+                className="ml-2 text-xs text-zinc-400 hover:text-red-500"
+                onClick={() =>
+                  setSelected((prev) => {
+                    const next = new Set(prev)
+                    next.delete(name)
+                    return next
+                  })
+                }
+                title="Deselect"
+              >
+                Deselect
+              </button>
+            </li>
+          ))}
+        </ul>
+      ),
+    [selected, setSelected, painGrades, setPainGrades],
+  )
 
   // Remove mesh search/filter and mesh list UI
   // Only show selected meshes in the left panel
-  const SelectedMeshList = useMemo(
+  const SelectedMeshListOld = useMemo(
     () =>
       selected.size === 0 ? (
         <div className="p-4 text-sm text-zinc-400">No parts selected.</div>
@@ -312,6 +427,7 @@ export default function HumanPage() {
               setSelected={setSelected}
               onMeshNames={(names) => setMeshNames(names)}
               onLoadingChange={setModelLoading}
+              painGrades={painGrades} // pass pain grades to Scene
             />
             <ambientLight intensity={0.6} />
             <hemisphereLight args={["#ffffff", "#3a3a3a", 0.6]} />
@@ -358,44 +474,83 @@ export default function HumanPage() {
               style={{ maxHeight: "calc(100vh - 160px)", scrollBehavior: "smooth" }}
               aria-live="polite"
             >
-              {messages.map((m, i) => (
-                <div
-                  key={i}
-                  className={`max-w-[85%] rounded-md px-3 py-2 text-sm ${
-                    m.role === "user"
-                      ? "bg-zinc-900 border border-zinc-800 self-end ml-auto"
-                      : "bg-violet-600 text-white font-medium"
-                  }`}
-                >
-                  {m.text}
-                </div>
-              ))}
-              <div ref={messagesEndRef} />
+              {recordLoading ? (
+                <div className="text-center text-sm text-zinc-400 py-8">Fetching your pain report...</div>
+              ) : (
+                <>
+                  {messages.map((m, i) => {
+                    // Check if this is the last user message and matches lastCsv
+                    const isLastUserCsv =
+                      m.role === "user" &&
+                      lastCsv &&
+                      m.text === lastCsv &&
+                      i === messages.findLastIndex((msg) => msg.role === "user")
+                    return (
+                      <div
+                        key={i}
+                        className={`${messagesClass} ${
+                          m.role === "user" ? userMessageClass : assistantMessageClass
+                        }`}
+                      >
+                        {/* Only show CSV toggle for last user CSV message */}
+                        {isLastUserCsv ? (
+                          <>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-zinc-400">Data sent to agent</span>
+                              <button
+                                type="button"
+                                className="text-zinc-400 hover:text-violet-400"
+                                onClick={() => setShowCsv((v) => !v)}
+                                title={showCsv ? "Hide CSV" : "Show CSV"}
+                              >
+                                {showCsv ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                              </button>
+                            </div>
+                            {showCsv && (
+                              <pre className="mt-2 bg-zinc-900 rounded p-2 text-xs text-zinc-200 border border-zinc-800 overflow-x-auto">
+                                {lastCsv}
+                              </pre>
+                            )}
+                          </>
+                        ) : (
+                          m.text
+                        )}
+                      </div>
+                    )
+                  })}
+                  <div ref={messagesEndRef} />
+                </>
+              )}
             </div>
 
+            {/* Chat input form */}
             <form
               className="p-3 border-t border-zinc-800 flex items-center gap-2"
               onSubmit={async (e) => {
-                e.preventDefault()
-                if (!chatLoading) await sendChat(chatInput)
+                e.preventDefault();
+                if (!chatLoading && !recordLoading) await sendChat(chatInput);
               }}
             >
               <input
                 className="flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Type your message"
+                placeholder={recordLoading ? "Fetching your pain report..." : "Type your message"}
                 aria-label="Chat message"
-                disabled={chatLoading}
+                disabled={chatLoading || recordLoading}
               />
               <button
                 type="submit"
                 className="inline-flex items-center gap-2 rounded-md bg-violet-600 px-3 py-2 text-sm text-white font-medium hover:bg-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
-                disabled={chatLoading}
+                disabled={chatLoading || recordLoading}
               >
                 {chatLoading ? (
                   <>
                     <Loader2 className="size-4 animate-spin" aria-hidden /> Sending
+                  </>
+                ) : recordLoading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" aria-hidden /> Loading
                   </>
                 ) : (
                   <>
@@ -419,10 +574,11 @@ function SceneInner(
     setSelected: React.Dispatch<React.SetStateAction<Set<string>>>
     onMeshNames: (names: string[]) => void
     onLoadingChange?: (loading: boolean) => void // new callback to report loading state
+    painGrades?: Record<string, number> // new prop
   },
   ref: React.Ref<SceneHandle>,
 ) {
-  const { fbxPath, selected, highlighted, setSelected, onMeshNames, onLoadingChange } = props
+  const { fbxPath, selected, highlighted, setSelected, onMeshNames, onLoadingChange, painGrades = {} } = props
   const groupRef = useRef<THREE.Group>(null)
   const controls = (useThree() as any).controls as import("three-stdlib").OrbitControls | undefined
   const camera = useThree((s) => s.camera)
@@ -537,6 +693,7 @@ function SceneInner(
       // If hovered, turn green; else highlight/selected is red
       const isHovered = hoveredName === name
       const active = highlighted.has(name) || selected.has(name)
+      const pain = selected.has(name) ? (painGrades[name] ?? 5) : undefined
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
       materials.forEach((mat) => {
         const m = mat as any
@@ -548,8 +705,16 @@ function SceneInner(
             m.emissive = new THREE.Color("#22c55e") // green
             m.emissiveIntensity = 0.75
           } else if (active) {
-            m.emissive = new THREE.Color("#ef4444") // red
-            m.emissiveIntensity = 0.75
+            // Interpolate color based on pain grade
+            if (typeof pain === "number") {
+              // 0: #fbbf24 (orange-400), 10: #ef4444 (red-500)
+              const lerpColor = lerpColorHex("#fbbf24", "#ef4444", pain / 10)
+              m.emissive = new THREE.Color(lerpColor)
+              m.emissiveIntensity = 0.75
+            } else {
+              m.emissive = new THREE.Color("#ef4444")
+              m.emissiveIntensity = 0.75
+            }
           } else {
             if (orig) m.emissive = orig instanceof THREE.Color ? orig.clone() : new THREE.Color(orig)
             if (typeof origI === "number") m.emissiveIntensity = origI
@@ -559,14 +724,19 @@ function SceneInner(
           const orig = m.userData?.__origColor as THREE.Color | undefined
           if (isHovered)
             m.color = new THREE.Color("#22c55e") // green
-          else if (active)
-            m.color = new THREE.Color("#ef4444") // red
-          else if (orig) m.color = orig instanceof THREE.Color ? orig.clone() : new THREE.Color(orig)
+          else if (active) {
+            if (typeof pain === "number") {
+              const lerpColor = lerpColorHex("#fbbf24", "#ef4444", pain / 10)
+              m.color = new THREE.Color(lerpColor)
+            } else {
+              m.color = new THREE.Color("#ef4444")
+            }
+          } else if (orig) m.color = orig instanceof THREE.Color ? orig.clone() : new THREE.Color(orig)
           m.needsUpdate = true
         }
       })
     })
-  }, [meshesByName, highlighted, selected, hoveredName])
+  }, [meshesByName, highlighted, selected, hoveredName, painGrades])
 
   const onPointerMove = useCallback((e: any) => {
     const obj = e.object as THREE.Object3D | undefined
@@ -745,3 +915,21 @@ function frameObject(
 
   camera.lookAt(center)
 }
+
+// --- Add lerpColorHex helper ---
+function lerpColorHex(a: string, b: string, t: number) {
+  // a, b: hex color strings, t: 0..1
+  const ah = a.replace("#", "")
+  const bh = b.replace("#", "")
+  const ar = parseInt(ah.substring(0, 2), 16)
+  const ag = parseInt(ah.substring(2, 4), 16)
+  const ab = parseInt(ah.substring(4, 6), 16)
+  const br = parseInt(bh.substring(0, 2), 16)
+  const bg = parseInt(bh.substring(2, 4), 16)
+  const bb = parseInt(bh.substring(4, 6), 16)
+  const r = Math.round(ar + (br - ar) * t)
+  const g = Math.round(ag + (bg - ag) * t)
+  const b_ = Math.round(ab + (bb - ab) * t)
+  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b_.toString(16).padStart(2, "0")}`
+}
+
