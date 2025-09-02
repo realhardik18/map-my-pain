@@ -44,14 +44,35 @@ export default function HumanPage() {
 
   const [chatOpen, setChatOpen] = useState(true)
   const [chatInput, setChatInput] = useState("")
-  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", text: "yes" }])
+  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", text: "Hi! How can I help you?" }])
+  const [chatLoading, setChatLoading] = useState(false)
+
   const sendChat = useCallback(
-    (text: string) => {
+    async (text: string) => {
       if (!text.trim()) return
-      setMessages((prev) => [...prev, { role: "user", text: text.trim() }, { role: "assistant", text: "yes" }])
+  const userMsg: ChatMessage = { role: "user", text: text.trim() }
+  setMessages((prev) => [...prev, userMsg])
       setChatInput("")
+      setChatLoading(true)
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: [...messages, userMsg] }),
+        })
+        const data = await res.json()
+        if (data?.text) {
+          setMessages((prev) => [...prev, { role: "assistant", text: data.text }])
+        } else {
+          setMessages((prev) => [...prev, { role: "assistant", text: "(No response)" }])
+        }
+      } catch (err: any) {
+        setMessages((prev) => [...prev, { role: "assistant", text: "Error: " + String(err) }])
+      } finally {
+        setChatLoading(false)
+      }
     },
-    [setMessages],
+    [messages],
   )
   const addSelectedToChat = useCallback(() => {
     const parts = Array.from(selected)
@@ -363,9 +384,9 @@ export default function HumanPage() {
 
             <form
               className="p-3 border-t border-[#1f2937] flex items-center gap-2"
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault()
-                sendChat(chatInput)
+                if (!chatLoading) await sendChat(chatInput)
               }}
             >
               <input
@@ -374,12 +395,14 @@ export default function HumanPage() {
                 onChange={(e) => setChatInput(e.target.value)}
                 placeholder="Type your message"
                 aria-label="Chat message"
+                disabled={chatLoading}
               />
               <button
                 type="submit"
                 className="rounded-md bg-[#8b5cf6] px-3 py-2 text-sm text-white font-medium hover:opacity-90"
+                disabled={chatLoading}
               >
-                Send
+                {chatLoading ? "..." : "Send"}
               </button>
             </form>
           </div>

@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
-import { LiquidMetal } from "@paper-design/shaders-react"
+import { Dithering } from "@paper-design/shaders-react"
 import { motion } from "framer-motion"
 import Link from "next/link"
 import { Target, History, MessageSquareText } from "lucide-react"
@@ -20,34 +20,30 @@ export default function LandingPage() {
       <section className="relative overflow-hidden min-h-screen flex items-center">
         {/* Shader background */}
         <div className="absolute inset-0">
-          <LiquidMetal
+          <Dithering
             style={{ height: "100%", width: "100%" }}
             colorBack="hsl(0, 0%, 0%)"
-            colorTint="hsl(278, 66%, 38%)"
-            repetition={4}
-            softness={0.45}
-            shiftRed={-0.5}
-            shiftBlue={-1}
-            distortion={0.12}
-            contour={1}
-            shape="none"
+            colorFront="hsl(287, 79%, 27%)"
+            shape="warp"
+            type="4x4"
+            pxSize={2.5}
             offsetX={0}
             offsetY={0}
-            scale={2.2}
+            scale={1}
             rotation={0}
-            speed={1.4}
+            speed={1}
           />
           <div className="absolute inset-0 bg-black/20" />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-b from-transparent to-black" />
         </div>
 
         {/* Content over shader */}
-        <div className="relative z-10 mx-auto w-full max-w-6xl px-6 py-16 md:py-24">
+        <div className="relative z-10 mx-auto w-full max-w-6xl px-6 py-16 md:py-24 text-center">
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, ease: "easeOut", delay: 0.05 }}
-            className="inline-flex items-center gap-2 rounded-full border border-[hsl(278,66%,38%)]/30 bg-[hsl(278,66%,38%)]/10 px-3 py-1 text-xs md:text-sm text-zinc-200"
+            className="mx-auto inline-flex items-center gap-2 rounded-full border border-[hsl(287,79%,27%)]/30 bg-[hsl(287,79%,27%)]/10 px-3 py-1 text-xs md:text-sm text-zinc-200"
           >
             <span>Built for clarity</span>
           </motion.div>
@@ -58,11 +54,11 @@ export default function LandingPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, ease: "easeOut" }}
           >
-            My Pain Map
+            Map My Pain
           </motion.h1>
 
           <motion.p
-            className="mt-4 max-w-2xl text-pretty text-lg md:text-2xl text-zinc-300"
+            className="mt-4 mx-auto max-w-2xl text-pretty text-lg md:text-2xl text-zinc-300"
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, ease: "easeOut", delay: 0.05 }}
@@ -71,14 +67,14 @@ export default function LandingPage() {
           </motion.p>
 
           {/* rotating taglines */}
-          <div className="mt-8 grid gap-2">
+          <div className="mt-8 grid place-items-center gap-2">
             {taglines.map((line, i) => (
               <motion.div
                 key={line}
                 className="w-fit rounded-full px-3 py-1 text-sm md:text-base text-zinc-200"
                 style={{
-                  background: i % 2 === 0 ? "rgba(124, 58, 237, 0.14)" : "rgba(124, 58, 237, 0.08)",
-                  border: "1px solid rgba(124, 58, 237, 0.35)",
+                  background: i % 2 === 0 ? "hsla(287,79%,27%,0.14)" : "hsla(287,79%,27%,0.08)",
+                  border: "1px solid hsla(287,79%,27%,0.35)",
                 }}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -91,14 +87,14 @@ export default function LandingPage() {
 
           {/* CTAs */}
           <motion.div
-            className="mt-10 flex flex-wrap items-center gap-4"
+            className="mt-10 flex flex-wrap items-center justify-center gap-4"
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.35 }}
           >
             <Link
               href="/patient/pain-map"
-              className="inline-flex items-center gap-2 rounded-md bg-[hsl(278,66%,38%)] px-5 py-3 text-base font-medium text-white shadow-[0_8px_24px_rgba(124,58,237,0.25)] hover:opacity-95 transition"
+              className="inline-flex items-center gap-2 rounded-md bg-[hsl(287,79%,27%)] px-5 py-3 text-base font-medium text-white shadow-[0_8px_24px_rgba(126,34,206,0.25)] hover:opacity-95 transition"
             >
               Open Pain Map
             </Link>
