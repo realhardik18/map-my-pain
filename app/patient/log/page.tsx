@@ -1,18 +1,23 @@
 "use client"
 
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useTransition,
-} from "react"
+import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { Canvas, useThree } from "@react-three/fiber"
 import { OrbitControls, Html } from "@react-three/drei"
 import * as THREE from "three"
 import { FBXLoader } from "three-stdlib"
 import Link from "next/link"
+import {
+  ChevronLeft,
+  ChevronRight,
+  Focus,
+  Maximize2,
+  Highlighter,
+  MessageSquarePlus,
+  Search,
+  Loader2,
+  Sparkles,
+  Undo2,
+} from "lucide-react"
 
 type SceneHandle = {
   frameAll: () => void
@@ -24,34 +29,49 @@ type SceneHandle = {
 type ChatMessage = { role: "user" | "assistant"; text: string }
 
 export default function HumanPage() {
-  const [fbxPathInput, setFbxPathInput] = useState("/models/human.fbx")
-  const [fbxPath, setFbxPath] = useState("/models/human.fbx")
+  // Model path state (kept for parity; UI focuses on current default path)
+  const [fbxPath] = useState("/models/human.fbx")
 
+  // Selection + highlighting
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [highlighted, setHighlighted] = useState<Set<string>>(new Set())
-  const [search, setSearch] = useState("")
-  const sceneRef = useRef<SceneHandle>(null)
-  const uploadedUrlRef = useRef<string | null>(null)
 
+  // Mesh discovery and search
   const [meshNames, setMeshNames] = useState<string[]>([])
+  const [search, setSearch] = useState("")
   const [isPending, startTransition] = useTransition()
-  const refreshMeshNames = useCallback(() => {
-    startTransition(() => {
-      const names = sceneRef.current?.getMeshNames() ?? []
-      setMeshNames(names)
-    })
-  }, [])
+  const sceneRef = useRef<SceneHandle>(null)
 
+  // Model loading indicator from Scene
+  const [modelLoading, setModelLoading] = useState(false)
+
+  // Chat state
   const [chatOpen, setChatOpen] = useState(true)
   const [chatInput, setChatInput] = useState("")
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", text: "Hi! How can I help you?" }])
   const [chatLoading, setChatLoading] = useState(false)
 
+  // State for info tab hover
+  const [showInstructions, setShowInstructions] = useState(false)
+
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    // Auto-scroll chat on new message
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
+  }, [messages, chatOpen])
+
+  const refreshMeshNames = useCallback(() => {
+    startTransition(() => {
+      const names = sceneRef.current?.getMeshNames() ?? []
+      setMeshNames(names)
+    })
+  }, [startTransition])
+
   const sendChat = useCallback(
     async (text: string) => {
       if (!text.trim()) return
-  const userMsg: ChatMessage = { role: "user", text: text.trim() }
-  setMessages((prev) => [...prev, userMsg])
+      const userMsg: ChatMessage = { role: "user", text: text.trim() }
+      setMessages((prev) => [...prev, userMsg])
       setChatInput("")
       setChatLoading(true)
       try {
@@ -74,244 +94,216 @@ export default function HumanPage() {
     },
     [messages],
   )
+
   const addSelectedToChat = useCallback(() => {
     const parts = Array.from(selected)
     if (parts.length === 0) return
     sendChat(`Selected parts: ${parts.join(", ")}`)
   }, [selected, sendChat])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const k = e.key.toLowerCase()
-      if (k === "h") {
-        if (selected.size > 0) {
-          setHighlighted((prev) => {
-            const next = new Set(prev)
-            for (const name of selected) {
-              if (next.has(name)) next.delete(name)
-              else next.add(name)
-            }
-            return next
-          })
-        }
-      } else if (k === "c") {
-        setHighlighted(new Set())
-      } else if (k === "f") {
-        sceneRef.current?.frameByNames(Array.from(selected))
-      }
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [selected])
+  // Keyboard shortcuts
+  // useEffect(() => {
+  //   const onKey = (e: KeyboardEvent) => {
+  //     const k = e.key.toLowerCase()
+  //     if (k === "h") {
+  //       if (selected.size > 0) {
+  //         setHighlighted((prev) => {
+  //           const next = new Set(prev)
+  //           for (const name of selected) {
+  //             if (next.has(name)) next.delete(name)
+  //             else next.add(name)
+  //           }
+  //           return next
+  //         })
+  //       }
+  //     } else if (k === "c") {
+  //       setHighlighted(new Set())
+  //     } else if (k === "f") {
+  //       sceneRef.current?.frameByNames(Array.from(selected))
+  //     }
+  //   }
+  //   window.addEventListener("keydown", onKey)
+  //   return () => window.removeEventListener("keydown", onKey)
+  // }, [selected])
 
   const filteredNames = useMemo(() => {
     const s = search.trim().toLowerCase()
-    const names = meshNames
-    if (!s) return names
-    return names.filter((n) => n.toLowerCase().includes(s))
+    if (!s) return meshNames
+    return meshNames.filter((n) => n.toLowerCase().includes(s))
   }, [meshNames, search])
 
-  // Memoize mesh list for sidebar to avoid unnecessary re-renders
-  const MeshList = useMemo(
+  // Remove mesh search/filter and mesh list UI
+  // Only show selected meshes in the left panel
+  const SelectedMeshList = useMemo(
     () =>
-      filteredNames.length === 0 ? (
-        <div className="p-3 text-sm text-[#94a3b8]">No meshes match.</div>
+      selected.size === 0 ? (
+        <div className="p-4 text-sm text-zinc-400">No parts selected.</div>
       ) : (
-        <ul className="divide-y divide-[#1f2937]">
-          {filteredNames.map((name) => {
-            const isHighlighted = highlighted.has(name)
-            const isSelected = selected.has(name)
-            return (
-              <li key={name} className="flex items-center justify-between gap-3 p-2">
-                <button
-                  className={`flex-1 text-left text-sm truncate ${
-                    isSelected ? "font-semibold text-[#8b5cf6]" : ""
-                  }`}
-                  onClick={() => {
-                    setSelected((prev) => {
-                      const next = new Set(prev)
-                      if (next.has(name)) next.delete(name)
-                      else next.add(name)
-                      return next
-                    })
-                  }}
-                  title={name}
-                >
-                  {name}
-                </button>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={isHighlighted}
-                    onChange={(e) =>
-                      setHighlighted((prev) => {
-                        const next = new Set(prev)
-                        if (e.target.checked) next.add(name)
-                        else next.delete(name)
-                        return next
-                      })
-                    }
-                    aria-label={`Highlight ${name}`}
-                  />
-                  <span className="text-xs text-[#94a3b8]">Highlight</span>
-                </label>
-              </li>
-            )
-          })}
+        <ul className="divide-y divide-zinc-800" role="list" aria-label="Selected mesh list">
+          {Array.from(selected).map((name) => (
+            <li key={name} className="flex items-center justify-between gap-3 p-2">
+              <span className="flex-1 text-left text-sm truncate rounded px-2 py-1 font-semibold text-violet-400 bg-zinc-900">{name}</span>
+              <button
+                className="ml-2 text-xs text-zinc-400 hover:text-red-500"
+                onClick={() =>
+                  setSelected((prev) => {
+                    const next = new Set(prev)
+                    next.delete(name)
+                    return next
+                  })
+                }
+                title="Deselect"
+              >
+                Deselect
+              </button>
+            </li>
+          ))}
         </ul>
       ),
-    [filteredNames, highlighted, selected, setSelected, setHighlighted],
+    [selected, setSelected],
   )
 
   return (
-    <main className="min-h-screen bg-[#000000] text-[#e5e7eb]">
+    <main className="min-h-screen bg-zinc-950 text-zinc-200">
       <section className="flex min-h-screen">
-        {/* LEFT PANEL - "my pain map" - transparent, always open */}
+        {/* LEFT PANEL */}
         <aside
-          className="w-80 md:w-96 border-r border-[#1f2937] p-4 flex flex-col gap-4 bg-black/30 backdrop-blur transition-all duration-300 ease-in-out overflow-hidden"
+          className="w-80 md:w-96 border-r border-zinc-800 p-4 flex flex-col gap-4 bg-zinc-900/40 backdrop-blur-sm transition-all duration-300 ease-in-out overflow-hidden"
           style={{ minWidth: "240px", maxWidth: "384px" }}
+          aria-label="Pain map controls"
         >
           <div className="flex items-center justify-between">
             <h2 className="text-pretty text-lg md:text-xl font-semibold tracking-tight">my pain map</h2>
+            <div className="flex items-center gap-2">
+              {modelLoading && (
+                <span className="inline-flex items-center gap-1 text-xs text-zinc-400">
+                  <Loader2 className="size-3 animate-spin" aria-hidden />
+                  Loading
+                </span>
+              )}
+            </div>
           </div>
 
-          <div className="mb-4">
+          <div>
             <Link
               href="/patient"
-              className="inline-flex items-center gap-2 rounded-md bg-violet-600 px-3 py-2 text-sm text-white hover:bg-violet-500 transition"
+              className="inline-flex items-center gap-2 rounded-md bg-violet-600 px-3 py-2 text-sm text-white hover:bg-violet-500 transition-colors focus:outline-none focus:ring-2 focus:ring-violet-500"
             >
-              ← Back to Dashboard
+              <Undo2 className="size-4" aria-hidden />
+              Back to Dashboard
             </Link>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-1 text-[#cbd5e1]">FBX public path</label>
-            <div className="flex items-center gap-2">
-              <input
-                className="w-full rounded-md border border-[#1f2937] bg-[#000000] px-3 py-2 text-sm placeholder:text-[#6b7280] focus:outline-none focus:ring-1 focus:ring-[#8b5cf6] transition-all"
-                value={fbxPathInput}
-                onChange={(e) => setFbxPathInput(e.target.value)}
-                placeholder="/models/human.fbx"
-                aria-label="FBX path"
-                disabled={isPending}
-              />
-              <button
-                className="rounded-md bg-[#8b5cf6] px-3 py-2 text-sm text-white font-medium hover:opacity-90"
-                onClick={() => {
-                  setFbxPath(fbxPathInput)
-                  setTimeout(refreshMeshNames, 500)
-                }}
-                disabled={isPending}
-              >
-                {isPending ? "..." : "Load"}
-              </button>
-            </div>
-            <p className="mt-1 text-xs text-[#94a3b8]">
-              Place your file in public, e.g. public/models/human.fbx, then set the path to /models/human.fbx
-            </p>
-          </div>
-
-          {meshNames.length === 0 && (
-            <div className="rounded-md border border-[#8b5cf6]/40 bg-black/40 p-3">
-              <p className="text-sm text-[#e5e7eb] mb-2">
-                No model loaded. Choose a public path (e.g., /models/human.fbx) or upload an FBX file.
-              </p>
-              <input
-                type="file"
-                accept=".fbx"
-                className="block w-full text-sm text-[#cbd5e1] file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:bg-[#8b5cf6] file:text-white hover:file:opacity-90"
-                onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (!file) return
-                  if (uploadedUrlRef.current) {
-                    URL.revokeObjectURL(uploadedUrlRef.current)
-                  }
-                  const url = URL.createObjectURL(file)
-                  uploadedUrlRef.current = url
-                  setFbxPathInput(url)
-                  setFbxPath(url)
-                  setTimeout(refreshMeshNames, 800)
-                }}
-              />
-              <p className="mt-1 text-xs text-[#94a3b8]">We load the file locally via a temporary URL.</p>
-            </div>
-          )}
-
           <div className="flex items-center justify-between">
             <div className="text-sm">
-              <span className="font-medium">Meshes:</span> <span className="text-[#94a3b8]">{meshNames.length}</span>
-            </div>
-            <div className="text-xs text-[#94a3b8]">
-              Selected: <span className="font-medium">{selected.size}</span>
+              <span className="font-medium">Selected Parts</span>{" "}
+              <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-2 py-0.5 text-xs text-zinc-300 border border-zinc-800">
+                {selected.size}
+              </span>
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-1 text-[#cbd5e1]">Search parts</label>
-            <input
-              className="w-full rounded-md border border-[#1f2937] bg-[#000000] px-3 py-2 text-sm placeholder:text-[#6b7280] focus:outline-none focus:ring-1 focus:ring-[#8b5cf6] transition-all"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Type to filter meshes by name"
-              aria-label="Search meshes"
-              disabled={isPending}
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
+          {/* 2x2 grid for action buttons */}
+          <div className="grid grid-cols-2 gap-2">
             <button
-              className="rounded-md bg-[#0f172a] px-3 py-2 text-sm text-[#e5e7eb] border border-[#1f2937] hover:bg-[#111827]"
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-zinc-900 px-3 py-2 text-sm text-zinc-200 border border-zinc-800 hover:bg-zinc-800 transition-colors focus:outline-none focus:ring-2 focus:ring-violet-500"
               onClick={() => sceneRef.current?.frameAll()}
-              title="Frame all"
+              title="Reset View"
             >
-              Frame all
+              <Maximize2 className="size-4" aria-hidden />
+              Reset Veiw
             </button>
             <button
-              className="rounded-md bg-[#0f172a] px-3 py-2 text-sm text-[#e5e7eb] border border-[#1f2937] hover:bg-[#111827] disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-zinc-900 px-3 py-2 text-sm text-zinc-200 border border-zinc-800 hover:bg-zinc-800 transition-colors focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
               onClick={() => sceneRef.current?.frameByNames(Array.from(selected))}
               disabled={selected.size === 0}
               title="Frame selected"
             >
-              Frame selected
+              <Focus className="size-4" aria-hidden />
+              Veiw Selected
             </button>
             <button
-              className="rounded-md bg-[#ef4444] px-3 py-2 text-sm text-white hover:opacity-90"
-              onClick={() => setHighlighted(new Set())}
-              title="Clear all highlights"
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-red-500 px-3 py-2 text-sm text-white hover:bg-red-500/90 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"
+              onClick={() => setSelected(new Set())}
+              title="Deselect all"
+              disabled={selected.size === 0}
             >
-              Clear highlights
+              {/* Changed icon and label */}
+              <Highlighter className="size-4" aria-hidden />
+              Deselect all
             </button>
             <button
-              className="rounded-md bg-[#8b5cf6] px-3 py-2 text-sm text-white font-medium hover:opacity-90 disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-violet-600 px-3 py-2 text-sm text-white font-medium hover:bg-violet-500 transition-colors focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
               onClick={addSelectedToChat}
               title="Send selected to chat"
               disabled={selected.size === 0}
             >
-              Add selected to chat
+              <MessageSquarePlus className="size-4" aria-hidden />
+              Log Selected
             </button>
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-2 text-[#cbd5e1]">Toggle highlights</label>
-            <div className="h-[38vh] overflow-auto rounded-md border border-[#1f2937]">
-              {MeshList}
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-zinc-300">Selected parts</label>
             </div>
-          </div>
-
-          <div className="text-xs text-[#94a3b8]">
-            Shortcuts: H = toggle highlight selected, F = frame selected, C = clear highlights
+            <div className="h-[38vh] overflow-auto rounded-md border border-zinc-800 bg-zinc-950">
+              {modelLoading ? (
+                <div className="flex items-center justify-center h-full text-sm text-zinc-400">
+                  <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
+                  Loading meshes...
+                </div>
+              ) : (
+                SelectedMeshList
+              )}
+            </div>
           </div>
         </aside>
 
         {/* CENTER - 3D VIEWER */}
         <div className="flex-1 relative overflow-hidden">
+          {/* Info tab in top right */}
+          <div className="absolute top-4 right-4 z-10 flex flex-col items-end">
+            <div
+              className="bg-zinc-900/80 border border-zinc-800 rounded-full w-8 h-8 flex items-center justify-center cursor-pointer hover:bg-violet-700 transition-colors"
+              title="Show instructions"
+              onMouseEnter={() => setShowInstructions(true)}
+              onMouseLeave={() => setShowInstructions(false)}
+              style={{ userSelect: "none" }}
+            >
+              <span className="text-white font-bold text-lg">i</span>
+            </div>
+            {showInstructions && (
+              <div
+                className="mt-2 bg-zinc-900/80 border border-zinc-800 rounded-md px-4 py-3 text-xs text-white shadow-lg w-[260px]"
+                onMouseEnter={() => setShowInstructions(true)}
+                onMouseLeave={() => setShowInstructions(false)}
+              >
+                <div className="font-semibold mb-2 text-sm">How to log your pain</div>
+                <ol className="list-decimal list-inside space-y-1">
+                  <li>
+                    <span className="font-medium">Select a part</span> on the 3D model (left click).
+                  </li>
+                  <li>
+                    <span className="font-medium">Add selected part to chat</span> and answer questions the AI asks you.
+                  </li>
+                  <li>
+                    <span className="font-medium">Log the pain</span> after answering.
+                  </li>
+                  <li>
+                    <span className="font-medium">To deselect</span> a part, left click it again or use the "Deselect" button.
+                  </li>
+                </ol>
+              </div>
+            )}
+          </div>
           <Canvas
             camera={{ position: [0, 1.6, 4], fov: 45, near: 0.1, far: 1000 }}
             onCreated={() => {
               setTimeout(refreshMeshNames, 600)
             }}
           >
-            <color attach="background" args={["#000000"]} />
+            <color attach="background" args={["#0b0b0b"]} />
             <Scene
               ref={sceneRef}
               fbxPath={fbxPath}
@@ -319,6 +311,7 @@ export default function HumanPage() {
               highlighted={highlighted}
               setSelected={setSelected}
               onMeshNames={(names) => setMeshNames(names)}
+              onLoadingChange={setModelLoading}
             />
             <ambientLight intensity={0.6} />
             <hemisphereLight args={["#ffffff", "#3a3a3a", 0.6]} />
@@ -329,68 +322,66 @@ export default function HumanPage() {
 
         {/* RIGHT - Collapsible Chat */}
         <aside
-          className={`relative border-l border-[#1f2937] transition-all duration-200 ease-in-out overflow-hidden ${
+          className={`relative border-l border-zinc-800 transition-all duration-200 ease-in-out overflow-hidden ${
             chatOpen ? "w-80 md:w-96" : "w-[52px]"
-          } bg-black/30 backdrop-blur`}
+          } bg-zinc-900/40 backdrop-blur-sm`}
           style={{ willChange: "width", minWidth: chatOpen ? "240px" : "52px", maxWidth: chatOpen ? "384px" : "52px" }}
+          aria-label="Chat panel"
+          aria-expanded={chatOpen}
         >
           <button
-            className="absolute -left-[26px] top-4 h-10 w-[26px] rounded-l-md bg-[#0f172a] border border-[#1f2937] text-xs text-white"
+            className="group absolute -left-[26px] top-4 h-10 w-[26px] rounded-l-md bg-zinc-900 border border-zinc-800 text-xs text-white hover:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-violet-500"
             onClick={() => setChatOpen((v) => !v)}
-            aria-label="Toggle chat panel"
-            title="Toggle chat"
+            aria-label={chatOpen ? "Collapse chat panel" : "Expand chat panel"}
+            title={chatOpen ? "Collapse chat" : "Expand chat"}
             tabIndex={0}
           >
-            {chatOpen ? "<" : ">"}
+            {chatOpen ? (
+              <ChevronLeft className="mx-auto size-4 transition-transform group-hover:-translate-x-px" aria-hidden />
+            ) : (
+              <ChevronRight className="mx-auto size-4 transition-transform group-hover:translate-x-px" aria-hidden />
+            )}
           </button>
 
           <div
             className={`h-full flex flex-col ${chatOpen ? "opacity-100" : "opacity-0 pointer-events-none"} transition-opacity duration-300`}
-            style={{
-              minHeight: "100%",
-              height: "100%",
-              overflow: "hidden",
-              transition: "opacity 0.3s",
-            }}
+            style={{ minHeight: "100%", height: "100%", overflow: "hidden" }}
           >
-            <div className="p-4 border-b border-[#1f2937]">
+            <div className="p-4 border-b border-zinc-800">
               <h3 className="text-sm font-semibold tracking-tight">Chat</h3>
-              <p className="text-xs text-[#94a3b8]">Assistant will reply “yes” to every message.</p>
+              <p className="text-xs text-zinc-400">Assistant will guide you through</p>
             </div>
 
-            {/* Chat messages container */}
+            {/* Chat messages */}
             <div
               className="flex-1 overflow-y-auto p-3 space-y-2"
               style={{ maxHeight: "calc(100vh - 160px)", scrollBehavior: "smooth" }}
-              ref={(el) => {
-                if (el) {
-                  el.scrollTop = el.scrollHeight
-                }
-              }}
+              aria-live="polite"
             >
               {messages.map((m, i) => (
                 <div
                   key={i}
                   className={`max-w-[85%] rounded-md px-3 py-2 text-sm ${
                     m.role === "user"
-                      ? "bg-[#0f172a] border border-[#1f2937] self-end ml-auto"
-                      : "bg-[#8b5cf6] text-white font-medium"
+                      ? "bg-zinc-900 border border-zinc-800 self-end ml-auto"
+                      : "bg-violet-600 text-white font-medium"
                   }`}
                 >
                   {m.text}
                 </div>
               ))}
+              <div ref={messagesEndRef} />
             </div>
 
             <form
-              className="p-3 border-t border-[#1f2937] flex items-center gap-2"
+              className="p-3 border-t border-zinc-800 flex items-center gap-2"
               onSubmit={async (e) => {
                 e.preventDefault()
                 if (!chatLoading) await sendChat(chatInput)
               }}
             >
               <input
-                className="flex-1 rounded-md border border-[#1f2937] bg-[#000000] px-3 py-2 text-sm placeholder:text-[#6b7280] focus:outline-none focus:ring-1 focus:ring-[#8b5cf6]"
+                className="flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 placeholder="Type your message"
@@ -399,10 +390,18 @@ export default function HumanPage() {
               />
               <button
                 type="submit"
-                className="rounded-md bg-[#8b5cf6] px-3 py-2 text-sm text-white font-medium hover:opacity-90"
+                className="inline-flex items-center gap-2 rounded-md bg-violet-600 px-3 py-2 text-sm text-white font-medium hover:bg-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
                 disabled={chatLoading}
               >
-                {chatLoading ? "..." : "Send"}
+                {chatLoading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" aria-hidden /> Sending
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="size-4" aria-hidden /> Send
+                  </>
+                )}
               </button>
             </form>
           </div>
@@ -419,10 +418,11 @@ function SceneInner(
     highlighted: Set<string>
     setSelected: React.Dispatch<React.SetStateAction<Set<string>>>
     onMeshNames: (names: string[]) => void
+    onLoadingChange?: (loading: boolean) => void // new callback to report loading state
   },
   ref: React.Ref<SceneHandle>,
 ) {
-  const { fbxPath, selected, highlighted, setSelected, onMeshNames } = props
+  const { fbxPath, selected, highlighted, setSelected, onMeshNames, onLoadingChange } = props
   const groupRef = useRef<THREE.Group>(null)
   const controls = (useThree() as any).controls as import("three-stdlib").OrbitControls | undefined
   const camera = useThree((s) => s.camera)
@@ -438,6 +438,7 @@ function SceneInner(
     setLoading(true)
     setLoadError(null)
     setGroup(null)
+    onLoadingChange?.(true) // propagate loading start
     const loader = new FBXLoader()
     loader.load(
       fbxPath,
@@ -445,18 +446,20 @@ function SceneInner(
         if (canceled) return
         setGroup(g)
         setLoading(false)
+        onLoadingChange?.(false) // done
       },
       undefined,
       (err) => {
         if (canceled) return
         setLoadError(err as any)
         setLoading(false)
+        onLoadingChange?.(false) // done with error
       },
     )
     return () => {
       canceled = true
     }
-  }, [fbxPath])
+  }, [fbxPath, onLoadingChange])
 
   const { meshesByName, meshNames } = useMemo(() => {
     const map = new Map<string, THREE.Mesh>()
@@ -496,13 +499,15 @@ function SceneInner(
   useEffect(() => {
     if (!groupRef.current) return
     frameObject(groupRef.current, camera, controls)
-  }, [group])
+  }, [group, camera, controls])
 
   useEffect(() => {
     const el = gl.domElement
-    el.style.cursor = hoveredName ? "pointer" : "auto"
+    // Remove pointer cursor on hover
+    el.style.cursor = "auto"
   }, [gl.domElement, hoveredName])
 
+  // Preserve original material colors/emissives to restore after highlight/hover
   useEffect(() => {
     meshesByName.forEach((mesh) => {
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
@@ -526,8 +531,11 @@ function SceneInner(
     })
   }, [meshesByName])
 
+  // Apply highlight/selection/hover visual states
   useEffect(() => {
     meshesByName.forEach((mesh, name) => {
+      // If hovered, turn green; else highlight/selected is red
+      const isHovered = hoveredName === name
       const active = highlighted.has(name) || selected.has(name)
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
       materials.forEach((mat) => {
@@ -536,24 +544,29 @@ function SceneInner(
         if ("emissive" in m) {
           const orig = m.userData?.__origEmissive as THREE.Color | undefined
           const origI = m.userData?.__origEmissiveIntensity as number | undefined
-          if (active) {
+          if (isHovered) {
+            m.emissive = new THREE.Color("#22c55e") // green
+            m.emissiveIntensity = 0.75
+          } else if (active) {
             m.emissive = new THREE.Color("#ef4444") // red
             m.emissiveIntensity = 0.75
           } else {
-            if (orig) m.emissive = orig.clone()
+            if (orig) m.emissive = orig instanceof THREE.Color ? orig.clone() : new THREE.Color(orig)
             if (typeof origI === "number") m.emissiveIntensity = origI
           }
           m.needsUpdate = true
         } else if ("color" in m) {
           const orig = m.userData?.__origColor as THREE.Color | undefined
-          if (active)
+          if (isHovered)
+            m.color = new THREE.Color("#22c55e") // green
+          else if (active)
             m.color = new THREE.Color("#ef4444") // red
-          else if (orig) m.color = orig.clone()
+          else if (orig) m.color = orig instanceof THREE.Color ? orig.clone() : new THREE.Color(orig)
           m.needsUpdate = true
         }
       })
     })
-  }, [meshesByName, highlighted, selected])
+  }, [meshesByName, highlighted, selected, hoveredName])
 
   const onPointerMove = useCallback((e: any) => {
     const obj = e.object as THREE.Object3D | undefined
@@ -624,14 +637,15 @@ function SceneInner(
     <group ref={groupRef}>
       {loading && (
         <Html center>
-          <div className="rounded-md bg-black/60 px-3 py-2 text-sm text-white border border-[#8b5cf6]/40">
-            Loading FBX…
+          <div className="inline-flex items-center gap-2 rounded-md bg-zinc-900/70 px-3 py-2 text-sm text-white border border-violet-500/30">
+            <Loader2 className="size-4 animate-spin" aria-hidden />
+            Loading model…
           </div>
         </Html>
       )}
       {loadError && (
         <Html center>
-          <div className="rounded-md bg-black/60 px-3 py-2 text-sm text-white border border-[#8b5cf6]/40">
+          <div className="rounded-md bg-zinc-900/70 px-3 py-2 text-sm text-white border border-violet-500/30">
             Could not load: {String(loadError.message || loadError)}
           </div>
         </Html>
@@ -642,14 +656,14 @@ function SceneInner(
       )}
 
       <Html position={[0, 2.2, 0]} center>
-        <div className="rounded-md bg-black/50 px-2 py-1 text-xs text-white">
+        <div className="rounded-md bg-zinc-900/70 px-2 py-1 text-xs text-white border border-zinc-800">
           {hoveredName
             ? `Hover: ${hoveredName}`
             : selected.size > 0
-            ? `Selected: ${Array.from(selected).slice(0, 2).join(", ")}${
-                selected.size > 2 ? ` +${selected.size - 2} more` : ""
-              }`
-            : "Click meshes to select"}
+              ? `Selected: ${Array.from(selected).slice(0, 2).join(", ")}${
+                  selected.size > 2 ? ` +${selected.size - 2} more` : ""
+                }`
+              : "Click meshes to select"}
         </div>
       </Html>
     </group>

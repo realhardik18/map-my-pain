@@ -10,7 +10,7 @@ import StaggerCard from "@/components/ui/StaggerCard"
 
 export default function LandingPage() {
   const taglines = useMemo(
-    () => ["Map pain. See patterns.", "Precision where it hurts.", "Highlight. Track. Heal.", "Your body, clearly."],
+    () => ["Map pain. See patterns.", "Precision where it hurts.", "Highlight. Track. Heal."],
     [],
   )
 
