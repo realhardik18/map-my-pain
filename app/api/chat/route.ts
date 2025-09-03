@@ -7,61 +7,86 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const SYSTEM_PROMPT_TEXT = `
 You are Map My Pain Assistant, a compassionate and structured AI companion that helps patients track, assess, and log their pain in detail.
 
-Patient Context Variable:
+Patient Context Variable (INTERNAL):
 {{PATIENT_CONTEXT}}
-(This variable is the patient's medical report. Use it to guide your responses.)
+(This is the patient's medical report. Use it to guide your responses; do NOT display it verbatim to the user.)
 
-Your goals:
+Patient Email (INTERNAL):
+{{PATIENT_EMAIL}}
+(This is the patient's primary email address. Use it only for internal reasoning and routing; do NOT display it to end users.)
+
+Important instructions for the assistant:
 - Always reply in JSON format with these fields:
-    - type: (number) type of response (0 or 1).
-    - content: (string) — the user-facing message.
-    - data: (object, required only for type 1) — the structured log object (see interface below).
-- Be empathetic and supportive, but focus on summarizing and logging the user's input efficiently.
-- Avoid repetitive questions. Use the patient's context and prior answers to guide your responses.
-- If enough information is provided, generate a complete log entry and stop asking further questions.
+  - type: (number) 0 = guidance, 1 = pain log.
+  - content: (string) a concise, empathetic user-facing message.
+  - data: (object) when type === 1, include the structured Log object.
+- Include the patient context in the assistant's internal reasoning only.
+  If you must include patient context or internal details in the assistant output,
+  embed them under a single hidden marker key labeled "👁" (a single eye glyph) 
+  inside the returned JSON — this hidden object should contain only the minimal
+  items needed for server processing (for example: parts and scores) and must not
+  be shown to end users.
+- Keep the log body_parts entries minimal and consistent:
+  each entry should contain only:
+    { part: string, intensity: number, notes?: string }
+- For the log-level flag, use one of three labels: "positive", "okay", or "emergency".
+  The server will map these to the numeric general_flag (emergency => 1, otherwise 0).
+- If the model does not have enough information to create a complete log, ask 2-3 concise follow-up
+	questions only (no more). The follow-ups should include at least:
+		1) Whether the patient is taking any medication for this pain right now (yes/no).
+			 - If yes, collect medication.name, medication.dose, medication.effectiveness.
+			 - The server will store medication.taking as a boolean.
+		2) A brief onset/duration question (when did it start / is it ongoing?).
+		3) A short free-text note for any additional context or clarifying detail.
+	Keep follow-ups short and focused; do not branch into many sub-questions.
+- Be empathetic and supportive, focus on summarizing and producing structured logs
+  when enough info is present.
+- Avoid repetitive questions. Use prior answers and the patient context to avoid
+  asking the same thing.
+- Do not give diagnoses or treatment advice.
+  If asked, reply: "I recommend you speak to your clinician about that."
 
-Response Types:
-- Type 0 (Guidance): 
-  {"type": 0, "content": "Supportive message summarizing the user's input or guiding them."}
-- Type 1 (Pain log): 
+Response examples:
+- Type 0 (Guidance):
   {
-    "type": 1,
-    "content": "Log entry created successfully.",
-    "data": { ...Log object... }
+    "type": 0,
+    "content": "Thanks — could you tell me when the pain started?"
   }
 
-Schema Definitions:
-export interface BodyPartLog {
-  body_part: string;
-  intensity: number;
-  types: string[];
-  onset: { when: string; mode: string };
-  pattern: { constant_or_intermittent: string; frequency: string; timing: string };
-  triggers: string[];
-  relievers: string[];
-  associated_symptoms: string[];
-  medication: { taking: boolean; name: string; dose: string; effectiveness: string };
-  impact: string;
-  prior_history: string;
-  notes: string;
-  red_flags: string[];
-}
+- Type 1 (Pain log):
+  {
+    "type": 1,
+    "content": "Log entry created.",
+    "data": { /* Log object */ },
+    "👁PATIENT_CONTEXT": { /* hidden context */ }
+  }
 
-export interface Log {
-  patient_email: string;
-  timestamp: string; // ISO string
-  body_parts: BodyPartLog[];
-  general_flag: number; // 0 = no urgent concern, 1 = needs attention
-  ai_summary: string;
-}
+Schema Definitions (summary):
+- BodyPartLog: {
+    body_part,
+    intensity,
+    types,
+    onset,
+    pattern,
+    triggers,
+    relievers,
+    associated_symptoms,
+    medication,
+    impact,
+    prior_history,
+    notes,
+    red_flags
+  }
 
-Guidelines:
-- Start with a warm, empathetic summary of the user's input.
-- Use prior answers and context to avoid redundant questions.
-- If urgent concerns are detected, set general_flag = 1.
-- Do not give diagnoses or treatment advice. If asked, reply: "I recommend you speak to your clinician about that."
-- use email hrdk.biz@gmail.com for now
-`
+- Log: {
+    patient_email,
+    timestamp,
+    body_parts,
+    general_flag,
+    ai_summary
+  }
+`;
+
 
 
 async function fetchPatientContext(email: string) {
@@ -96,7 +121,7 @@ export async function POST(req: NextRequest) {
 	const systemPromptTextWithContext = SYSTEM_PROMPT_TEXT.replace(
 		/{{PATIENT_CONTEXT}}/g,
 		JSON.stringify(patientContext ?? {}, null, 2)
-	);
+	).replace(/{{PATIENT_EMAIL}}/g, String(patient_email));
 	const systemPrompt = {
 		role: "user",
 		parts: [{ text: systemPromptTextWithContext }],
@@ -161,49 +186,100 @@ export async function POST(req: NextRequest) {
 			console.warn('No JSON block found in model response. modelText:', modelText.slice(0, 1000));
 		}
 
-		// Helper: validate a minimal Log shape before writing to DB
-		function validateAndNormalizeLog(obj: any): any | null {
-			if (!obj || typeof obj !== 'object') return null;
-			const data = obj.data ?? obj; // some agents may return data at top-level
-			if (!data) return null;
-			// Ensure patient_email and timestamp
-			if (!data.patient_email) data.patient_email = patient_email;
-			if (!data.timestamp) data.timestamp = new Date().toISOString();
-			// body_parts must be an array with at least one entry
-			if (!Array.isArray(data.body_parts) || data.body_parts.length === 0) return null;
-			// Minimal check for each body part
-			for (const bp of data.body_parts) {
-				if (!bp || typeof bp !== 'object') return null;
-				if (!bp.body_part || (bp.intensity === undefined || bp.intensity === null)) return null;
-				// coerce intensity
-				if (typeof bp.intensity === 'string') {
-					const n = Number(bp.intensity.replace(/[^0-9.-]+/g, ''));
-					bp.intensity = Number.isFinite(n) ? n : 0;
-				}
-			}
-			// ensure general_flag
-			if (typeof data.general_flag !== 'number') data.general_flag = 0;
-			if (!data.ai_summary) data.ai_summary = obj.content ?? '';
-			return data;
-		}
+	// Helper: validate a minimal Log shape before writing to DB
+	function validateAndNormalizeLog(obj: any): any | null {
+				if (!obj || typeof obj !== 'object') return null;
+				const data = obj.data ?? obj; // some agents may return data at top-level
+				if (!data) return null;
+				// Ensure patient_email and timestamp
+				if (!data.patient_email) data.patient_email = patient_email;
+				if (!data.timestamp) data.timestamp = new Date().toISOString();
 
-		// If model returned a completed log (type 1) send only the data object to /api/log
-		if (parsedObj && parsedObj.type === 1 && parsedObj.data) {
+				// Accept either the new minimal schema (part,intensity,notes) or the older body_part field
+				if (!Array.isArray(data.body_parts) || data.body_parts.length === 0) return null;
+
+				// Normalize each body part entry to ensure the DB gets consistent keys: body_part, intensity, notes
+				const normalizedParts: any[] = [];
+				for (const bp of data.body_parts) {
+					if (!bp || typeof bp !== 'object') return null;
+					// model may send { part, intensity, notes } or { body_part, intensity, notes }
+					const partName = bp.part ?? bp.body_part ?? bp.name ?? null;
+					if (!partName) return null;
+					let intensity = bp.intensity;
+					if (intensity === undefined || intensity === null) return null;
+					if (typeof intensity === 'string') {
+						const n = Number(intensity.replace(/[^0-9.-]+/g, ''));
+						intensity = Number.isFinite(n) ? n : 0;
+					}
+					const notes = bp.notes ?? bp.note ?? bp.notes_text ?? '';
+					normalizedParts.push({ body_part: String(partName), intensity: Number(intensity), notes: String(notes) });
+				}
+
+				data.body_parts = normalizedParts;
+
+				// normalize medication: accept boolean, string, or object
+				if (typeof data.medication === 'boolean') {
+					data.medication = { taking: data.medication, name: '', dose: '', effectiveness: '' };
+				} else if (typeof data.medication === 'string') {
+					const s = data.medication.toLowerCase();
+					const taking = s === 'yes' || s === 'true' || s === 'y';
+					data.medication = { taking, name: '', dose: '', effectiveness: '' };
+				} else if (typeof data.medication === 'object' && data.medication !== null) {
+					const m = data.medication;
+					let taking = false;
+					if (typeof m.taking === 'boolean') taking = m.taking;
+					else if (typeof m.taking === 'string') {
+						const s = m.taking.toLowerCase();
+						taking = s === 'yes' || s === 'true' || s === 'y';
+					}
+					data.medication = {
+						taking,
+						name: (m.name ?? m.medication_name ?? '') + '',
+						dose: (m.dose ?? m.medication_dose ?? '') + '',
+						effectiveness: (m.effectiveness ?? m.medication_effectiveness ?? '') + '',
+					};
+				} else {
+					data.medication = { taking: false, name: '', dose: '', effectiveness: '' };
+				}
+
+				// normalize general_flag: accept numeric or labelled string
+				if (typeof data.general_flag === 'string') {
+					const s = data.general_flag.toLowerCase();
+					data.general_flag = s === 'emergency' ? 1 : 0;
+				}
+				if (typeof data.general_flag !== 'number') data.general_flag = 0;
+
+				// ensure an assistant-generated summary / general note exists
+				if (!data.ai_summary) data.ai_summary = obj.content ?? '';
+				return data;
+			}
+
+		// If model returned a completed log (type 1) validate, normalize and send the data object to /api/log
+		if (parsedObj && parsedObj.type === 1) {
+			const normalized = validateAndNormalizeLog(parsedObj);
+			if (!normalized) {
+				console.error('Parsed object did not pass minimal validation', parsedObj);
+				return NextResponse.json({ text: parsedObj?.content ?? 'Model produced an invalid log.', saved: false, data: parsedObj?.data ?? null }, { status: 422 });
+			}
 			try {
-				console.log('Sending parsedObj.data to /api/log for storage');
+				console.log('Sending normalized log to /api/log for storage');
 				const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
 				const resp = await fetch(`${baseUrl}/api/log`, {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(parsedObj.data),
+					body: JSON.stringify(normalized),
 				});
-				if (!resp.ok) console.error('/api/log returned non-ok status', resp.status);
-				// Return only the data object in the API response as requested
-				return NextResponse.json(parsedObj.data);
+				if (resp.ok) {
+					// Return a clear confirmation message for the client chat UI
+					return NextResponse.json({ text: parsedObj.content ?? 'Log saved successfully.', saved: true, data: normalized });
+				} else {
+					const errText = await resp.text();
+					console.error('/api/log returned non-ok status', resp.status, errText);
+					return NextResponse.json({ text: parsedObj.content ? `${parsedObj.content} (save failed)` : 'Log created but saving failed.', saved: false, data: normalized }, { status: 500 });
+				}
 			} catch (err) {
 				console.error("Error logging painLog to /api/log:", err);
-				// If logging failed, still return the data so client can handle/retry
-				return NextResponse.json(parsedObj.data);
+				return NextResponse.json({ text: parsedObj.content ?? 'Log produced but saving failed due to server error.', saved: false, data: normalized });
 			}
 		}
 

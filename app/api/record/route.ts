@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import clientPromise from '@/lib/monogdb';
-import { Record } from '@/models/Record';
+import type { Record as RecordType } from '@/models/Record';
 
 // POST: Add a new record
 export async function POST(req: NextRequest) {
   const data = await req.json();
-  if (!data.patient_email || !data.context) {
+  // allow empty string for context (admins may create patient with empty context)
+  if (!data.patient_email || typeof data.context === 'undefined' || data.context === null) {
     return NextResponse.json({ error: 'Invalid record data' }, { status: 400 });
   }
   const client = await clientPromise;
   const db = client.db();
-  await db.collection('records').insertOne(data);
+  await db.collection('records').insertOne(data as RecordType);
   return NextResponse.json({ success: true });
 }
 
@@ -32,7 +33,8 @@ export async function GET(req: NextRequest) {
 // PUT: Update context for a given patient_email
 export async function PUT(req: NextRequest) {
   const data = await req.json();
-  if (!data.patient_email || !data.context) {
+  // allow empty string context updates
+  if (!data.patient_email || typeof data.context === 'undefined' || data.context === null) {
     return NextResponse.json({ error: 'Invalid update data' }, { status: 400 });
   }
   const client = await clientPromise;
