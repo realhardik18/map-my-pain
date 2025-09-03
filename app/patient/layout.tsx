@@ -11,8 +11,8 @@ import { SignedIn, SignedOut, useUser, SignOutButton, SignInButton, SignUpButton
 const nav = [
   { href: "/patient", label: "Home", icon: MdHome },
   { href: "/patient/history", label: "History", icon: MdHistory },
-  { href: "/patient/my-docs", label: "My Docs", icon: MdDescription },
-  { href: "/patient/pain", label: "Pain Map", icon: MdMap },
+  { href: "/patient/my-docs", label: "My Reports", icon: MdDescription },
+  { href: "/patient/pain-map", label: "Pain Map", icon: MdMap },
   { href: "/patient/log", label: "Log", icon: MdNote },
 ]
 

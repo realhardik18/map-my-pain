@@ -1,23 +1,23 @@
-export interface BodyPartLog {
+export interface BodyPart {
   body_part: string;
   intensity: number;
-  types: string[];
-  onset: { when: string; mode: string };
-  pattern: { constant_or_intermittent: string; frequency: string; timing: string };
-  triggers: string[];
-  relievers: string[];
-  associated_symptoms: string[];
-  medication: { taking: boolean; name: string; dose: string; effectiveness: string };
-  impact: string;
-  prior_history: string;
   notes: string;
-  red_flags: string[];
+}
+
+export interface Medication {
+  taking: boolean;
+  name: string;
+  dose: string | number;
+  effectiveness: string;
 }
 
 export interface Log {
+  _id: string;
   patient_email: string;
-  timestamp: string; // ISO string
-  body_parts: BodyPartLog[];
+  timestamp: string;
+  body_parts: BodyPart[];
   general_flag: number;
   ai_summary: string;
+  pdf_data: string;
+  medication: Medication;
 }

@@ -15,11 +15,16 @@ Patient Email (INTERNAL):
 {{PATIENT_EMAIL}}
 (This is the patient's primary email address. Use it only for internal reasoning and routing; do NOT display it to end users.)
 
+Current Date/Time (INTERNAL):
+{{CURRENT_DATE}}
+(This is the current date and time. Use it when generating timestamp-related content.)
+
 Important instructions for the assistant:
 - Always reply in JSON format with these fields:
   - type: (number) 0 = guidance, 1 = pain log.
   - content: (string) a concise, empathetic user-facing message.
   - data: (object) when type === 1, include the structured Log object.
+  - pdf_data: (string) when type === 1, include a markdown-formatted text that can be converted to a PDF report.
 - Include the patient context in the assistant's internal reasoning only.
   If you must include patient context or internal details in the assistant output,
   embed them under a single hidden marker key labeled "👁" (a single eye glyph) 
@@ -31,20 +36,40 @@ Important instructions for the assistant:
     { part: string, intensity: number, notes?: string }
 - For the log-level flag, use one of three labels: "positive", "okay", or "emergency".
   The server will map these to the numeric general_flag (emergency => 1, otherwise 0).
-- If the model does not have enough information to create a complete log, ask 2-3 concise follow-up
-	questions only (no more). The follow-ups should include at least:
-		1) Whether the patient is taking any medication for this pain right now (yes/no).
-			 - If yes, collect medication.name, medication.dose, medication.effectiveness.
-			 - The server will store medication.taking as a boolean.
-		2) A brief onset/duration question (when did it start / is it ongoing?).
-		3) A short free-text note for any additional context or clarifying detail.
-	Keep follow-ups short and focused; do not branch into many sub-questions.
-- Be empathetic and supportive, focus on summarizing and producing structured logs
-  when enough info is present.
-- Avoid repetitive questions. Use prior answers and the patient context to avoid
-  asking the same thing.
+- If the model does not have enough information to create a complete log, ask follow-up
+  questions conversationally and empathetically. Important information to gather includes:
+    1) The quality/type of pain (sharp, dull, throbbing, burning, aching, stabbing, etc.)
+    2) Whether the patient is taking any medication for this pain right now.
+       - If yes, collect medication name, dose, and perceived effectiveness.
+	   - dose should be 0 if not present else an integer representing its value in mg
+    3) When the pain started and whether it's ongoing or intermittent.
+    4) Any additional context that helps understand the patient's experience.
+  Ask these questions naturally in conversation, not as a checklist. Show empathy 
+  and acknowledge the patient's experience before asking for more details.
+- Be genuinely empathetic and supportive. Acknowledge the patient's pain experience
+  before requesting additional information. Use phrases like "I understand this must be 
+  difficult" or "That sounds challenging" to validate their experience.
+- Focus on creating a natural conversation rather than a clinical interview. 
+  Gently guide the conversation to collect necessary information for structured logs.
+- Avoid clinical or detached language. Use warm, conversational tone that feels 
+  human and caring.
+- When asking about pain types/qualities, use natural phrasing like:
+  "Could you describe what the pain feels like? For example, is it sharp, dull, throbbing, burning...?"
+  instead of clinical questions like "What type of pain is it?"
+- Remember that patients aren't medical experts. Use simple language and help them
+  describe their pain by offering examples they can relate to.
 - Do not give diagnoses or treatment advice.
   If asked, reply: "I recommend you speak to your clinician about that."
+- For the pdf_data field, create a comprehensive markdown report that includes:
+  - Report header with patient name and ID (from context)
+  - Current date and time
+  - Background information about the patient (from context)
+  - Detailed description of the current pain issue
+  - Body parts affected with intensity ratings
+  - Medication information
+  - Timeline of the issue
+  - Summary of findings
+  - Format this as a professional medical report in markdown
 
 Response examples:
 - Type 0 (Guidance):
@@ -56,8 +81,28 @@ Response examples:
 - Type 1 (Pain log):
   {
     "type": 1,
-    "content": "Log entry created.",
-    "data": { /* Log object */ },
+    "content": "I've recorded your pain information. It sounds like you're experiencing significant discomfort in your lower back. Remember to rest and take care of yourself.",
+    "data": {
+      "patient_email": "patient@example.com",
+      "timestamp": "2025-09-03T15:30:00Z",
+      "body_parts": [
+        {
+          "part": "Lower back",
+          "intensity": 7,
+          "types": ["dull", "aching", "throbbing"],
+          "notes": "Worse when sitting for long periods"
+        }
+      ],
+      "general_flag": 0,
+      "medication": {
+        "taking": true,
+        "name": "Ibuprofen",
+        "dose": "400",
+        "effectiveness": "Moderate relief"
+      },
+      "ai_summary": "Patient reports moderate to severe lower back pain that's dull, aching, and throbbing. Pain worsens with prolonged sitting. Taking ibuprofen with moderate relief."
+    },
+    "pdf_data": "# Pain Report\\n\\n**Patient:** John Doe\\n\\n**Date:** September 3, 2025\\n\\n...",
     "👁PATIENT_CONTEXT": { /* hidden context */ }
   }
 
@@ -65,7 +110,7 @@ Schema Definitions (summary):
 - BodyPartLog: {
     body_part,
     intensity,
-    types,
+    types, // e.g., "sharp", "dull", "throbbing", "burning", "aching", "stabbing"
     onset,
     pattern,
     triggers,
@@ -83,7 +128,8 @@ Schema Definitions (summary):
     timestamp,
     body_parts,
     general_flag,
-    ai_summary
+    ai_summary,
+    pdf_data
   }
 `;
 
@@ -118,10 +164,31 @@ export async function POST(req: NextRequest) {
 	} catch (err) {
 		console.error("Error fetching patient context:", err);
 	}
+	
+	// Get the precise current date and time
+	const now = new Date();
+	const currentDate = now.toLocaleString('en-US', { 
+		timeZone: 'UTC',
+		weekday: 'long',
+		year: 'numeric',
+		month: 'long',
+		day: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+		hour12: true
+	});
+	
+	// Add ISO timestamp for exact precision
+	const isoTimestamp = now.toISOString();
+	const formattedDateTime = `${currentDate} (ISO: ${isoTimestamp})`;
+
 	const systemPromptTextWithContext = SYSTEM_PROMPT_TEXT.replace(
 		/{{PATIENT_CONTEXT}}/g,
 		JSON.stringify(patientContext ?? {}, null, 2)
-	).replace(/{{PATIENT_EMAIL}}/g, String(patient_email));
+	).replace(/{{PATIENT_EMAIL}}/g, String(patient_email))
+	.replace(/{{CURRENT_DATE}}/g, formattedDateTime);
+	
 	const systemPrompt = {
 		role: "user",
 		parts: [{ text: systemPromptTextWithContext }],
@@ -212,7 +279,22 @@ export async function POST(req: NextRequest) {
 						intensity = Number.isFinite(n) ? n : 0;
 					}
 					const notes = bp.notes ?? bp.note ?? bp.notes_text ?? '';
-					normalizedParts.push({ body_part: String(partName), intensity: Number(intensity), notes: String(notes) });
+					
+					// Capture pain types
+					let types = bp.types ?? bp.pain_types ?? bp.painTypes ?? [];
+					// If types is a string, convert to array
+					if (typeof types === 'string') {
+						types = types.split(/,\s*/).filter(Boolean);
+					} else if (!Array.isArray(types)) {
+						types = [];
+					}
+					
+					normalizedParts.push({ 
+						body_part: String(partName), 
+						intensity: Number(intensity), 
+						notes: String(notes),
+						types: types
+					});
 				}
 
 				data.body_parts = normalizedParts;
@@ -251,6 +333,26 @@ export async function POST(req: NextRequest) {
 
 				// ensure an assistant-generated summary / general note exists
 				if (!data.ai_summary) data.ai_summary = obj.content ?? '';
+				
+				// add pdf_data if it exists in the response
+				if (obj.pdf_data) {
+					data.pdf_data = obj.pdf_data;
+				} else {
+					// Create a basic PDF data if none provided
+					data.pdf_data = `# Pain Report\n\n**Patient Email:** ${data.patient_email}\n\n**Date:** ${new Date(data.timestamp).toLocaleString()}\n\n## Summary\n\n${data.ai_summary}\n\n## Body Parts Affected\n\n${data.body_parts.map((bp: any) => {
+						let painDetails = `- **${bp.body_part}**: Pain intensity ${bp.intensity}/10`;
+						// Add pain types if available
+						if (bp.types && Array.isArray(bp.types) && bp.types.length > 0) {
+							painDetails += ` - Type: ${bp.types.join(', ')}`;
+						}
+						// Add notes if available
+						if (bp.notes) {
+							painDetails += ` - ${bp.notes}`;
+						}
+						return painDetails;
+					}).join('\n')}\n\n## Medication\n\n${data.medication.taking ? `Taking: ${data.medication.name || 'Medication'}\nDose: ${data.medication.dose || 'Not specified'}\nEffectiveness: ${data.medication.effectiveness || 'Not specified'}` : 'No medication reported'}`;
+				}
+				
 				return data;
 			}
 
@@ -271,15 +373,30 @@ export async function POST(req: NextRequest) {
 				});
 				if (resp.ok) {
 					// Return a clear confirmation message for the client chat UI
-					return NextResponse.json({ text: parsedObj.content ?? 'Log saved successfully.', saved: true, data: normalized });
+					return NextResponse.json({ 
+						text: parsedObj.content ?? 'Log saved successfully.', 
+						saved: true, 
+						data: normalized,
+						pdf_data: normalized.pdf_data
+					});
 				} else {
 					const errText = await resp.text();
 					console.error('/api/log returned non-ok status', resp.status, errText);
-					return NextResponse.json({ text: parsedObj.content ? `${parsedObj.content} (save failed)` : 'Log created but saving failed.', saved: false, data: normalized }, { status: 500 });
+					return NextResponse.json({ 
+						text: parsedObj.content ? `${parsedObj.content} (save failed)` : 'Log created but saving failed.', 
+						saved: false, 
+						data: normalized,
+						pdf_data: normalized.pdf_data 
+					}, { status: 500 });
 				}
 			} catch (err) {
 				console.error("Error logging painLog to /api/log:", err);
-				return NextResponse.json({ text: parsedObj.content ?? 'Log produced but saving failed due to server error.', saved: false, data: normalized });
+				return NextResponse.json({ 
+					text: parsedObj.content ?? 'Log produced but saving failed due to server error.', 
+					saved: false, 
+					data: normalized,
+					pdf_data: normalized.pdf_data 
+				});
 			}
 		}
 
