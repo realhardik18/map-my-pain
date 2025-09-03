@@ -60,6 +60,7 @@ Guidelines:
 - Use prior answers and context to avoid redundant questions.
 - If urgent concerns are detected, set general_flag = 1.
 - Do not give diagnoses or treatment advice. If asked, reply: "I recommend you speak to your clinician about that."
+- use email hrdk.biz@gmail.com for now
 `
 
 
