@@ -6,14 +6,19 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "seed": "node --env-file=.env.local scripts/seed.mjs",
+    "setup": "npm run db:up && npm run seed",
+    "db:local": "bash scripts/mongo-local.sh"
   },
   "dependencies": {
-    "@clerk/nextjs": "^6.31.8",
     "@paper-design/shaders-react": "^0.0.47",
     "@radix-ui/react-slot": "^1.2.3",
     "@react-three/drei": "^10.7.4",
     "@react-three/fiber": "^9.3.0",
+    "@tailwindcss/typography": "^0.5.20",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
@@ -29,6 +34,7 @@
     "react-markdown": "^10.1.0",
     "recharts": "^3.1.2",
     "remark-gfm": "^4.0.1",
+    "swr": "^2.5.1",
     "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {

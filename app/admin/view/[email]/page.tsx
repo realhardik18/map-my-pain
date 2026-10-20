@@ -10,6 +10,8 @@ import * as THREE from "three"
 import { FBXLoader } from "three-stdlib"
 import { Loader2 } from "lucide-react"
 import gsap from "gsap"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 interface BodyPart {
   body_part: string
@@ -84,7 +86,7 @@ export default function ViewPatient() {
   const [fbxPath] = useState("/models/human.fbx")
   const [modelLoading, setModelLoading] = useState(false)
   const sceneRef = useRef<SceneHandle>(null)
-  const [painGrades, setPainGrades] = useState<Record<string, number>>({})
+  const [painGrades, setPainGrades] = useState<{ [mesh: string]: number }>({})
   const [highlighted, setHighlighted] = useState<Set<string>>(new Set())
 
   useEffect(() => {
@@ -598,15 +600,14 @@ export default function ViewPatient() {
                   </div>
 
                   {selectedLog.pdf_data && (
-                    <a
-                      href={selectedLog.pdf_data}
-                      className="inline-flex items-center gap-2 text-sm text-purple-300 hover:text-purple-200"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      View PDF
-                      <span aria-hidden>→</span>
-                    </a>
+                    <details className="rounded-md border border-zinc-800 bg-black/30 p-3">
+                      <summary className="cursor-pointer text-sm text-purple-300 hover:text-purple-200">
+                        View full report
+                      </summary>
+                      <div className="prose prose-invert prose-sm mt-3 max-w-none">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedLog.pdf_data}</ReactMarkdown>
+                      </div>
+                    </details>
                   )}
                 </div>
               ) : (

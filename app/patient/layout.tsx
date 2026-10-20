@@ -2,11 +2,11 @@
 "use client"
 import Link from "next/link"
 import type React from "react"
-import { usePathname, useRouter } from "next/navigation"
-import { useState, useEffect } from "react"
+import { usePathname } from "next/navigation"
+import { useState } from "react"
 import { cn } from "@/lib/utils"
 import { MdHome, MdHistory, MdDescription, MdMap, MdNote, MdLogout } from "react-icons/md"
-import { SignedIn, SignedOut, useUser, SignOutButton, SignInButton, SignUpButton } from "@clerk/nextjs"
+import { useSession, signOut } from "@/lib/useSession"
 
 const nav = [
   { href: "/patient", label: "Home", icon: MdHome },
@@ -18,16 +18,9 @@ const nav = [
 
 export default function PatientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const router = useRouter()
   const [collapsed, setCollapsed] = useState(false)
-  const { user, isLoaded } = useUser()
-
-  // Redirect unauthenticated users to /login
-  useEffect(() => {
-    if (isLoaded && !user) {
-      router.replace("/sign-in")
-    }
-  }, [user, isLoaded, router])
+  // Signed-out visitors are redirected to /sign-in by middleware.ts
+  const { user } = useSession()
 
   // Do not apply layout for /patient/log
   if (pathname === "/patient/log") {
@@ -36,7 +29,6 @@ export default function PatientLayout({ children }: { children: React.ReactNode 
 
   return (
     <>
-      <SignedIn>
         <div className="min-h-dvh bg-black text-zinc-200">
           <div className="flex">
             <aside
@@ -89,53 +81,40 @@ export default function PatientLayout({ children }: { children: React.ReactNode 
               </nav>
 
               <div className="px-2 mt-4 mb-2 flex items-center gap-3 py-2">
-                <SignedIn>
-                  {user && (
-                    <>
-                      <img
-                        src={user.imageUrl}
-                        alt="Profile"
-                        className={cn("size-8 rounded-full", collapsed && "mx-auto")}
-                      />
-                      <div className={cn("min-w-0 flex-1", collapsed && "sr-only")}> 
-                        <p className="text-sm font-medium">{user.fullName || user.username}</p>
-                        <p className="truncate text-xs text-zinc-400">{user.primaryEmailAddress?.emailAddress}</p>
-                      </div>
-                      <SignOutButton>
-                        <button
-                          className={cn(
-                            "rounded-md px-2 py-2 text-zinc-300 hover:bg-zinc-900 transition flex items-center justify-center",
-                            collapsed && "px-2"
-                          )}
-                          title="Logout"
-                        >
-                          <MdLogout className="text-lg" />
-                          <span className={cn("ml-2 text-sm", collapsed && "sr-only")}>Logout</span>
-                        </button>
-                      </SignOutButton>
-                    </>
-                  )}
-                </SignedIn>
-                <SignedOut>
-                  <div className={cn("flex flex-col w-full", collapsed && "items-center")}> 
-                    <SignInButton>
-                      <button className="bg-violet-700 text-white rounded-md font-medium text-sm px-3 py-2 mb-2 w-full">Sign In</button>
-                    </SignInButton>
-                    <SignUpButton>
-                      <button className="bg-violet-950 text-white rounded-md font-medium text-sm px-3 py-2 w-full">Sign Up</button>
-                    </SignUpButton>
-                  </div>
-                </SignedOut>
+                {user && (
+                  <>
+                    <div
+                      className={cn(
+                        "grid size-8 shrink-0 place-items-center rounded-full bg-violet-800 text-sm font-semibold text-white",
+                        collapsed && "mx-auto",
+                      )}
+                      aria-hidden
+                    >
+                      {user.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className={cn("min-w-0 flex-1", collapsed && "sr-only")}>
+                      <p className="text-sm font-medium">{user.name}</p>
+                      <p className="truncate text-xs text-zinc-400">{user.email}</p>
+                    </div>
+                    <button
+                      onClick={signOut}
+                      className={cn(
+                        "rounded-md px-2 py-2 text-zinc-300 hover:bg-zinc-900 transition flex items-center justify-center",
+                        collapsed && "px-2"
+                      )}
+                      title="Logout"
+                    >
+                      <MdLogout className="text-lg" />
+                      <span className={cn("ml-2 text-sm", collapsed && "sr-only")}>Logout</span>
+                    </button>
+                  </>
+                )}
               </div>
             </aside>
 
             <main className="flex-1">{children}</main>
           </div>
         </div>
-      </SignedIn>
-      <SignedOut>
-        {/* Redirect handled by useEffect above */}
-      </SignedOut>
     </>
   )
 }

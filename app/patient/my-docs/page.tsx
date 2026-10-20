@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import useSWR from "swr"
-import { useUser } from "@clerk/nextjs"
+import { useSession } from "@/lib/useSession"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -65,9 +65,9 @@ function getReportMarkdown(log?: LogRow) {
   return fallback
 }
 
-export default function HistoryPage() {
-  const { user } = useUser()
-  const email = user?.primaryEmailAddress?.emailAddress
+export default function MyReportsPage() {
+  const { user } = useSession()
+  const email = user?.email
   const { data, isLoading } = useSWR<LogRow[]>(
     email ? `/api/log?patient_email=${encodeURIComponent(email)}` : null,
     fetcher,
@@ -75,7 +75,8 @@ export default function HistoryPage() {
 
   const [selectedLog, setSelectedLog] = useState<LogRow | null>(null)
 
-  const logs = Array.isArray(data) ? data : []
+  // newest first
+  const logs = Array.isArray(data) ? [...data].reverse() : []
   const displayed = logs
 
   return (
@@ -83,7 +84,7 @@ export default function HistoryPage() {
       <div className="mx-auto w-full max-w-6xl px-4 py-8">
         {/* Header */}
         <header className="mb-6 flex items-center justify-between">
-          <h1 className="text-pretty text-2xl font-semibold tracking-tight">History</h1>
+          <h1 className="text-pretty text-2xl font-semibold tracking-tight">My Reports</h1>
           <div aria-hidden />
         </header>
 
@@ -102,7 +103,7 @@ export default function HistoryPage() {
                 />
               </div>
             ) : displayed.length === 0 ? (
-              <div className="p-8 text-center text-zinc-400">No history found.</div>
+              <div className="p-8 text-center text-zinc-400">No reports yet. Log your pain with the assistant to generate one.</div>
             ) : (
               <Table>
                 <TableCaption className="text-zinc-400">

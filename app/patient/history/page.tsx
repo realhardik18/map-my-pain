@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react"
 import useSWR from "swr"
-import { useUser } from "@clerk/nextjs"
+import { useSession } from "@/lib/useSession"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -50,8 +50,8 @@ function toNumberMaybe(val: unknown, fallback = 0): number {
 }
 
 export default function HistoryPage() {
-  const { user } = useUser()
-  const email = user?.primaryEmailAddress?.emailAddress
+  const { user } = useSession()
+  const email = user?.email
   const { data, isLoading } = useSWR<LogRow[]>(
     email ? `/api/log?patient_email=${encodeURIComponent(email)}` : null,
     fetcher,
@@ -67,7 +67,8 @@ export default function HistoryPage() {
     setFilters((prev) => ({ ...prev, [name]: value }))
   }
 
-  const logs = Array.isArray(data) ? data : []
+  // newest first
+  const logs = Array.isArray(data) ? [...data].reverse() : []
 
   const filtered = useMemo(() => {
     const bodyPartQ = filters.body_part.trim().toLowerCase()

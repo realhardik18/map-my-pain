@@ -104,6 +104,12 @@ export default function LandingPage() {
             >
               Go to Dashboard
             </Link>
+            <Link
+              href="/sign-in"
+              className="inline-flex items-center gap-2 rounded-md px-5 py-3 text-base font-medium text-zinc-300 hover:text-white transition"
+            >
+              Sign in
+            </Link>
           </motion.div>
         </div>
       </section>

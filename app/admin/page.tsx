@@ -6,6 +6,7 @@ import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, Tabl
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { useSession, signOut } from '@/lib/useSession'
 
 type RecordItem = {
   patient_email: string
@@ -16,10 +17,13 @@ type RecordItem = {
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
 export default function Admin() {
+  const { user } = useSession()
   const { data, mutate } = useSWR<RecordItem[]>('/api/record', fetcher)
   const records = Array.isArray(data) ? data : []
 
   const [email, setEmail] = useState('')
+  const [name, setName] = useState('')
+  const [password, setPassword] = useState('')
   const [contextText, setContextText] = useState('')
   const [status, setStatus] = useState('')
 
@@ -58,13 +62,15 @@ export default function Admin() {
       const res = await fetch('/api/record', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ patient_email: email, context: contextText }),
+        body: JSON.stringify({ patient_email: email, name, password, context: contextText }),
       })
       const json = await res.json().catch(() => null)
       if (res.ok) {
-        setStatus('Patient added successfully')
+        setStatus(`Patient added successfully — they can sign in with ${json.login.email} / ${json.login.password}`)
         setContextText('')
         setEmail('')
+        setName('')
+        setPassword('')
         await mutate()
       } else {
         setStatus(json?.error || 'Failed to add patient')
@@ -79,6 +85,15 @@ export default function Admin() {
       <div className="mx-auto w-full max-w-6xl px-4 py-8">
         <header className="mb-8 flex items-center justify-between">
           <h1 className="text-pretty text-3xl font-semibold tracking-tight">Admin Portal</h1>
+          <div className="flex items-center gap-3 text-sm text-zinc-400">
+            {user ? <span>{user.name} ({user.email})</span> : null}
+            <button
+              onClick={signOut}
+              className="rounded-md border border-zinc-800 px-3 py-1.5 text-zinc-200 hover:bg-zinc-900"
+            >
+              Logout
+            </button>
+          </div>
         </header>
 
         <section className="mb-6">
@@ -90,6 +105,22 @@ export default function Admin() {
                 onChange={(e) => setEmail((e.target as any).value)} 
                 className="h-10"
                 required
+              />
+            </div>
+            <div className="min-w-[160px]">
+              <Input
+                placeholder="Full name"
+                value={name}
+                onChange={(e) => setName((e.target as any).value)}
+                className="h-10"
+              />
+            </div>
+            <div className="min-w-[160px]">
+              <Input
+                placeholder="Password (default patient123)"
+                value={password}
+                onChange={(e) => setPassword((e.target as any).value)}
+                className="h-10"
               />
             </div>
             <div className="flex-grow min-w-[300px]">
@@ -148,7 +179,7 @@ export default function Admin() {
         </section>
 
         <div className={cn("mt-4 px-2 py-1 rounded-md", {
-          "bg-green-800/40 text-green-300": status === "Patient added successfully",
+          "bg-green-800/40 text-green-300": status.startsWith("Patient added successfully"),
           "bg-red-800/40 text-red-300": status.includes("Error") || status.includes("Failed"),
           "bg-zinc-800/40 text-zinc-300": status === "Adding patient..."
         })}>

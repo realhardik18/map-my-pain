@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
-import { useUser } from '@clerk/nextjs'
+import { useSession } from '@/lib/useSession'
 import { Canvas, useThree } from "@react-three/fiber"
 import { OrbitControls, Html } from "@react-three/drei"
 import * as THREE from "three"
@@ -32,7 +32,7 @@ type SceneHandle = {
 type ChatMessage = { role: "user" | "assistant"; text: string }
 
 export default function HumanPage() {
-  const { user } = useUser();
+  const { user } = useSession();
   // Model path state (kept for parity; UI focuses on current default path)
   const [fbxPath] = useState("/models/human.fbx")
 
@@ -84,7 +84,7 @@ export default function HumanPage() {
 
   useEffect(() => {
     async function fetchRecord() {
-      const patient_email = user?.primaryEmailAddress?.emailAddress;
+      const patient_email = user?.email;
       if (!patient_email) return;
       setRecordLoading(true);
       try {
@@ -110,7 +110,7 @@ export default function HumanPage() {
       setChatInput("");
       setChatLoading(true);
       try {
-        const patient_email = user?.primaryEmailAddress?.emailAddress;
+        const patient_email = user?.email;
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -121,6 +121,12 @@ export default function HumanPage() {
           setMessages((prev) => [...prev, { role: "assistant", text: data.text }]);
         } else {
           setMessages((prev) => [...prev, { role: "assistant", text: "(No response)" }]);
+        }
+        if (data?.saved) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", text: "✅ Your pain log has been saved. You can find it under History and My Reports." },
+          ]);
         }
       } catch (err: any) {
         setMessages((prev) => [...prev, { role: "assistant", text: "Error: " + String(err) }]);
@@ -160,43 +166,9 @@ export default function HumanPage() {
     setLastCsv(csv)
     setShowCsv(false)
 
-    // Build mesh highlights array: { mesh_id, score }
-    const mesh_highlights = initialSelection.map((name) => ({ mesh_id: name, score: painGrades[name] ?? 5 }))
-
-    // Build body_parts array (keeps parity with existing log schema)
-    const body_parts = initialSelection.map((name) => ({ part: name, pain: painGrades[name] ?? 5 }))
-
-    // Patient email from client-side user object
-    const patient_email = (user as any)?.primaryEmailAddress?.emailAddress ?? null
-
-    // Log payload
-    const payload = {
-      patient_email,
-      timestamp: new Date().toISOString(),
-      body_parts,
-      mesh_highlights,
-    }
-
-    // Post to /api/log so server saves the log with email and mesh highlights
-    try {
-      const res = await fetch('/api/log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      if (res.ok) {
-        setMessages((prev) => [...prev, { role: 'assistant', text: 'Issue has been logged!' }])
-      } else {
-        const errText = await res.text()
-        setMessages((prev) => [...prev, { role: 'assistant', text: `Logging failed: ${errText}` }])
-      }
-    } catch (err: any) {
-      setMessages((prev) => [...prev, { role: 'assistant', text: 'Logging error: ' + String(err) }])
-    }
-
-    // Still send CSV to the chat agent
+    // Send CSV to the chat agent; it saves the full log once it has enough detail
     sendChat(csv)
-  }, [selected, painGrades, sendChat, user, setMessages])
+  }, [selected, painGrades, sendChat])
 
   const messagesClass = "max-w-[85%] rounded-md px-3 py-2 text-sm"
   const userMessageClass = "bg-zinc-900 border border-zinc-800 self-end ml-auto"
@@ -326,7 +298,7 @@ export default function HumanPage() {
               title="Reset View"
             >
               <Maximize2 className="size-4" aria-hidden />
-              Reset Veiw
+              Reset View
             </button>
             <button
               className="inline-flex items-center justify-center gap-2 rounded-md bg-zinc-900 px-3 py-2 text-sm text-zinc-200 border border-zinc-800 hover:bg-zinc-800 transition-colors focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
@@ -335,7 +307,7 @@ export default function HumanPage() {
               title="Frame selected"
             >
               <Focus className="size-4" aria-hidden />
-              Veiw Selected
+              View Selected
             </button>
             <button
               className="inline-flex items-center justify-center gap-2 rounded-md bg-red-500 px-3 py-2 text-sm text-white hover:bg-red-500/90 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"

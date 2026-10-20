@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
-import clientPromise from '@/lib/monogdb'
+import clientPromise from '@/lib/mongodb'
+import { requireUser } from '@/lib/auth'
 
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/free";
 
 const SYSTEM_PROMPT_TEXT = `
 You are Map My Pain Assistant, a compassionate and structured AI companion that helps patients track, assess, and log their pain in detail.
@@ -136,25 +138,24 @@ Schema Definitions (summary):
 
 
 async function fetchPatientContext(email: string) {
-	console.log(email)
-	const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-	const res = await fetch(`${baseUrl}/api/record?patient_email=${encodeURIComponent(email)}`);
-	if (!res.ok) return null;
-	const records = await res.json();
-	console.log(records)
-	return records?.[0]?.context ?? null;
+	const client = await clientPromise;
+	const record = await client.db().collection('records').findOne({ patient_email: email });
+	return record?.context ?? null;
 }
 
 export async function POST(req: NextRequest) {
-	if (!GEMINI_API_KEY) {
-		console.error("Missing Gemini API key");
-		return NextResponse.json({ error: "Missing Gemini API key" }, { status: 500 });
+	const { user, error: authError } = await requireUser('patient');
+	if (authError) return authError;
+	if (!OPENROUTER_API_KEY) {
+		console.error("Missing OpenRouter API key");
+		return NextResponse.json({ text: "The assistant isn't configured yet (OPENROUTER_API_KEY is missing in .env.local)." }, { status: 500 });
 	}
 	const body = await req.json();
-	const { messages, patient_email } = body;
-	if (!Array.isArray(messages) || !patient_email) {
-		console.error("Missing messages array or patient_email", body);
-		return NextResponse.json({ error: "Missing messages array or patient_email" }, { status: 400 });
+	const { messages } = body;
+	const patient_email = user.email;
+	if (!Array.isArray(messages)) {
+		console.error("Missing messages array", body);
+		return NextResponse.json({ error: "Missing messages array" }, { status: 400 });
 	}
 
 	let patientContext = null;
@@ -189,41 +190,43 @@ export async function POST(req: NextRequest) {
 	).replace(/{{PATIENT_EMAIL}}/g, String(patient_email))
 	.replace(/{{CURRENT_DATE}}/g, formattedDateTime);
 	
-	const systemPrompt = {
-		role: "user",
-		parts: [{ text: systemPromptTextWithContext }],
-	};
-
-	const contents = [
-		systemPrompt,
+	const chatMessages = [
+		{ role: "system", content: systemPromptTextWithContext },
 		...messages.map((m: any) => ({
-			role: m.role === "user" ? "user" : "model",
-			parts: [{ text: m.text }],
+			role: m.role === "user" ? "user" : "assistant",
+			content: String(m.text ?? ""),
 		}))
 	];
 
 	try {
-		console.log('Sending request to Gemini...');
-		const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`,
+		console.log(`Sending request to OpenRouter (${OPENROUTER_MODEL})...`);
+		const res = await fetch(OPENROUTER_API_URL,
 			{
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ contents }),
+				headers: {
+					"Content-Type": "application/json",
+					"Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+					"HTTP-Referer": "http://localhost:3000",
+					"X-Title": "Map My Pain",
+				},
+				body: JSON.stringify({ model: OPENROUTER_MODEL, messages: chatMessages }),
 			}
 		);
 		if (!res.ok) {
 			const error = await res.text();
-			console.error("Gemini API error:", error);
-			return NextResponse.json({ error }, { status: res.status });
+			console.error("OpenRouter API error:", error);
+			const text = res.status === 429
+				? "The free AI model is rate-limited right now — please wait a few seconds and try again."
+				: "Sorry, the AI service returned an error. Please try again.";
+			return NextResponse.json({ text, error }, { status: res.status });
 		}
 		const data = await res.json();		
 		// Robust extraction of model response
-		let modelText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+		let modelText: string = data?.choices?.[0]?.message?.content;
+		console.log('Model used:', data?.model);
 		console.log(modelText)
 		if (!modelText) {
-			modelText = data?.candidates?.[0]?.content?.text
-				|| data?.candidates?.[0]?.parts?.[0]?.text
-				|| "(No response)";
+			modelText = data?.choices?.[0]?.message?.reasoning || "(No response)";
 		}
 
 		// Extract everything from the first '{' to the last '}' in modelText
@@ -356,7 +359,7 @@ export async function POST(req: NextRequest) {
 				return data;
 			}
 
-		// If model returned a completed log (type 1) validate, normalize and send the data object to /api/log
+		// If model returned a completed log (type 1) validate, normalize and save it
 		if (parsedObj && parsedObj.type === 1) {
 			const normalized = validateAndNormalizeLog(parsedObj);
 			if (!normalized) {
@@ -364,33 +367,19 @@ export async function POST(req: NextRequest) {
 				return NextResponse.json({ text: parsedObj?.content ?? 'Model produced an invalid log.', saved: false, data: parsedObj?.data ?? null }, { status: 422 });
 			}
 			try {
-				console.log('Sending normalized log to /api/log for storage');
-				const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-				const resp = await fetch(`${baseUrl}/api/log`, {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(normalized),
+				normalized.patient_email = patient_email;
+				normalized.timestamp = new Date().toISOString();
+				const client = await clientPromise;
+				await client.db().collection('logs').insertOne({ ...normalized });
+				// Return a clear confirmation message for the client chat UI
+				return NextResponse.json({ 
+					text: parsedObj.content ?? 'Log saved successfully.', 
+					saved: true, 
+					data: normalized,
+					pdf_data: normalized.pdf_data
 				});
-				if (resp.ok) {
-					// Return a clear confirmation message for the client chat UI
-					return NextResponse.json({ 
-						text: parsedObj.content ?? 'Log saved successfully.', 
-						saved: true, 
-						data: normalized,
-						pdf_data: normalized.pdf_data
-					});
-				} else {
-					const errText = await resp.text();
-					console.error('/api/log returned non-ok status', resp.status, errText);
-					return NextResponse.json({ 
-						text: parsedObj.content ? `${parsedObj.content} (save failed)` : 'Log created but saving failed.', 
-						saved: false, 
-						data: normalized,
-						pdf_data: normalized.pdf_data 
-					}, { status: 500 });
-				}
 			} catch (err) {
-				console.error("Error logging painLog to /api/log:", err);
+				console.error("Error saving pain log:", err);
 				return NextResponse.json({ 
 					text: parsedObj.content ?? 'Log produced but saving failed due to server error.', 
 					saved: false, 

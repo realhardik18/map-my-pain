@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+!.env.example
+
+# local mongodb binary + data (scripts/mongo-local.sh)
+/.mongo

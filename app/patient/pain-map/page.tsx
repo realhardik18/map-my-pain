@@ -160,8 +160,8 @@ export default function PainMapPage() {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const userEmail = "hrdk.biz@gmail.com" // Replace with actual user email retrieval
-        const response = await fetch(`/api/log?patient_email=${userEmail}`)
+        // The API scopes logs to the signed-in patient
+        const response = await fetch(`/api/log`)
         if (!response.ok) throw new Error("Failed to fetch logs")
 
         const data = await response.json()

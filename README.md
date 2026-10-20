@@ -1,36 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Map My Pain
 
-## Getting Started
+Patients map where it hurts on a 3D head/neck model, talk it through with an AI assistant, and get a structured pain log + report. Clinicians (admins) manage patients and review their history, charts and reports.
 
-First, run the development server:
+Everything runs locally: Next.js + a local MongoDB + simple email/password auth. The AI runs through [OpenRouter](https://openrouter.ai) using its free model router (`openrouter/free`).
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Setup
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+1. **Install dependencies**
+   ```bash
+   npm install
+   ```
+2. **Environment** — copy the example and fill in your OpenRouter key (free at https://openrouter.ai/keys):
+   ```bash
+   cp .env.example .env.local
+   # then edit .env.local: set OPENROUTER_API_KEY and a random AUTH_SECRET
+   ```
+3. **Start MongoDB** — pick one:
+   ```bash
+   npm run db:local   # no Docker: downloads mongod into .mongo/ once, keep this terminal open
+   npm run db:up      # or with Docker (docker-compose.yml)
+   ```
+4. **Seed demo data** (wipes and recreates users, records and logs):
+   ```bash
+   npm run seed
+   ```
+5. **Run the app**
+   ```bash
+   npm run dev
+   ```
+   Open http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Demo accounts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Role | Email | Password |
+| --- | --- | --- |
+| Admin / clinician | `admin@demo.local` | `admin123` |
+| Patient (neck / tension headaches) | `priya@demo.local` | `patient123` |
+| Patient (TMJ / jaw) | `rahul@demo.local` | `patient123` |
+| Patient (migraine) | `ananya@demo.local` | `patient123` |
 
-## Learn More
+Each seeded patient has a medical background record and 24 pain logs spread over the last ~16 months.
 
-To learn more about Next.js, take a look at the following resources:
+## How it fits together
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `middleware.ts` — redirects signed-out visitors to `/sign-in`; `/admin/*` is admin-only, `/patient/*` is patient-only.
+- `lib/session.ts`, `lib/auth.ts` — HMAC-signed session cookie, scrypt password hashes, API role checks.
+- `app/api/record` — patient medical context (admin creates/edits; creating a patient also creates their login).
+- `app/api/log` — pain logs (patients only ever see their own).
+- `app/api/chat` — sends the conversation + patient context to OpenRouter; when the model returns a complete log it is saved to MongoDB.
+- `scripts/seed.mjs` — demo data. Body part names match the meshes in `public/models/human.fbx` so they highlight on the 3D model.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Change the model with `OPENROUTER_MODEL` in `.env.local` (e.g. a specific `...:free` model) if the free router is slow or rate-limited.
