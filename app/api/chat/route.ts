@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server"
 import clientPromise from '@/lib/mongodb'
 import { requireUser } from '@/lib/auth'
 
-const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/free";
+const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const MAX_ATTEMPTS = 2;
+const REQUEST_TIMEOUT_MS = 45_000;
 
 const SYSTEM_PROMPT_TEXT = `
 You are Map My Pain Assistant, a compassionate and structured AI companion that helps patients track, assess, and log their pain in detail.
@@ -146,9 +148,9 @@ async function fetchPatientContext(email: string) {
 export async function POST(req: NextRequest) {
 	const { user, error: authError } = await requireUser('patient');
 	if (authError) return authError;
-	if (!OPENROUTER_API_KEY) {
-		console.error("Missing OpenRouter API key");
-		return NextResponse.json({ text: "The assistant isn't configured yet (OPENROUTER_API_KEY is missing in .env.local)." }, { status: 500 });
+	if (!OPENAI_API_KEY) {
+		console.error("Missing OpenAI API key");
+		return NextResponse.json({ text: "The assistant isn't configured yet (OPENAI_API_KEY is missing in .env.local)." }, { status: 500 });
 	}
 	const body = await req.json();
 	const { messages } = body;
@@ -199,61 +201,70 @@ export async function POST(req: NextRequest) {
 	];
 
 	try {
-		console.log(`Sending request to OpenRouter (${OPENROUTER_MODEL})...`);
-		const res = await fetch(OPENROUTER_API_URL,
-			{
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-					"HTTP-Referer": "http://localhost:3000",
-					"X-Title": "Map My Pain",
-				},
-				body: JSON.stringify({ model: OPENROUTER_MODEL, messages: chatMessages }),
-			}
-		);
-		if (!res.ok) {
-			const error = await res.text();
-			console.error("OpenRouter API error:", error);
-			const text = res.status === 429
-				? "The free AI model is rate-limited right now — please wait a few seconds and try again."
-				: "Sorry, the AI service returned an error. Please try again.";
-			return NextResponse.json({ text, error }, { status: res.status });
-		}
-		const data = await res.json();		
-		// Robust extraction of model response
-		let modelText: string = data?.choices?.[0]?.message?.content;
-		console.log('Model used:', data?.model);
-		console.log(modelText)
-		if (!modelText) {
-			modelText = data?.choices?.[0]?.message?.reasoning || "(No response)";
-		}
-
-		// Extract everything from the first '{' to the last '}' in modelText
+		let modelText = "";
 		let jsonBlock: string | null = null;
 		let firstBrace = -1;
 		let lastBrace = -1;
-		firstBrace = modelText.indexOf('{');
-		lastBrace = modelText.lastIndexOf('}');
-		if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-			jsonBlock = modelText.substring(firstBrace, lastBrace + 1).trim();
-			console.log('Extracted JSON substring from first to last brace (length', jsonBlock?.length ?? 0, '):');
-			// Log a short preview to avoid gigantic logs
-			if (jsonBlock) console.log(jsonBlock.slice(0, 2000));
-		} else {
-			console.warn('Could not find a JSON object bounded by braces in modelText');
-		}
-
 		let parsedObj: any = null;
-		if (jsonBlock) {
-			try {
-				parsedObj = JSON.parse(jsonBlock);
-				console.log('Parsed JSON object from model response:', parsedObj);
-			} catch (err) {
-				console.error("Error parsing jsonBlock as JSON:", err, '\njsonBlock:\n', jsonBlock);
+
+		// Small free models sometimes emit malformed JSON; retry once before giving up
+		for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+			console.log(`Sending request to OpenAI (${OPENAI_MODEL}), attempt ${attempt}...`);
+			const res = await fetch(OPENAI_API_URL,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						"Authorization": `Bearer ${OPENAI_API_KEY}`,
+					},
+					// json_object mode guarantees parseable JSON; the system prompt describes the shape
+					body: JSON.stringify({ model: OPENAI_MODEL, messages: chatMessages, response_format: { type: "json_object" } }),
+					signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+				}
+			);
+			if (!res.ok) {
+				const error = await res.text();
+				console.error("OpenAI API error:", error);
+				const text = res.status === 429
+					? "The AI service is busy right now — please wait a few seconds and try again."
+					: "Sorry, the AI service returned an error. Please try again.";
+				return NextResponse.json({ text, error }, { status: res.status });
 			}
-		} else {
-			console.warn('No JSON block found in model response. modelText:', modelText.slice(0, 1000));
+			const data = await res.json();
+			// Robust extraction of model response
+			modelText = data?.choices?.[0]?.message?.content;
+			console.log('Model used:', data?.model);
+			console.log(modelText)
+			if (!modelText) {
+				modelText = "(No response)";
+			}
+
+			// Extract everything from the first '{' to the last '}' in modelText
+			jsonBlock = null;
+			parsedObj = null;
+			firstBrace = modelText.indexOf('{');
+			lastBrace = modelText.lastIndexOf('}');
+			if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+				jsonBlock = modelText.substring(firstBrace, lastBrace + 1).trim();
+				console.log('Extracted JSON substring from first to last brace (length', jsonBlock?.length ?? 0, '):');
+				// Log a short preview to avoid gigantic logs
+				if (jsonBlock) console.log(jsonBlock.slice(0, 2000));
+			} else {
+				console.warn('Could not find a JSON object bounded by braces in modelText');
+			}
+
+			if (jsonBlock) {
+				try {
+					parsedObj = JSON.parse(jsonBlock);
+					console.log('Parsed JSON object from model response:', parsedObj);
+				} catch (err) {
+					console.error("Error parsing jsonBlock as JSON:", err, '\njsonBlock:\n', jsonBlock);
+				}
+			} else {
+				console.warn('No JSON block found in model response. modelText:', modelText.slice(0, 1000));
+			}
+
+			if (!jsonBlock || parsedObj) break;
 		}
 
 	// Helper: validate a minimal Log shape before writing to DB
@@ -395,10 +406,17 @@ export async function POST(req: NextRequest) {
 			displayText = (modelText.slice(0, firstBrace) + modelText.slice(lastBrace + 1)).trim();
 		}
 
+		if (jsonBlock && !parsedObj && !displayText) {
+			displayText = "Sorry, I had trouble writing that up. Could you send your last message again?";
+		}
+
 		// Always return the content field if parsedObj exists, else fallback to displayText
 		return NextResponse.json({ text: parsedObj?.content ?? displayText });
 	} catch (err: any) {
 		console.error("Error in chat POST handler:", err);
-		return NextResponse.json({ error: String(err) }, { status: 500 });
+		const text = err?.name === "TimeoutError"
+			? "The AI took too long to respond. Please try again."
+			: "Sorry, something went wrong. Please try again.";
+		return NextResponse.json({ text, error: String(err) }, { status: 500 });
 	}
 }

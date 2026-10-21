@@ -2,7 +2,7 @@
 
 Patients map where it hurts on a 3D head/neck model, talk it through with an AI assistant, and get a structured pain log + report. Clinicians (admins) manage patients and review their history, charts and reports.
 
-Everything runs locally: Next.js + a local MongoDB + simple email/password auth. The AI runs through [OpenRouter](https://openrouter.ai) using its free model router (`openrouter/free`).
+Everything runs locally: Next.js + a local MongoDB + simple email/password auth. The AI assistant uses the OpenAI API (`gpt-4.1-mini` by default).
 
 ## Setup
 
@@ -10,10 +10,10 @@ Everything runs locally: Next.js + a local MongoDB + simple email/password auth.
    ```bash
    npm install
    ```
-2. **Environment** — copy the example and fill in your OpenRouter key (free at https://openrouter.ai/keys):
+2. **Environment** — copy the example and fill in your OpenAI key (https://platform.openai.com/api-keys):
    ```bash
    cp .env.example .env.local
-   # then edit .env.local: set OPENROUTER_API_KEY and a random AUTH_SECRET
+   # then edit .env.local: set OPENAI_API_KEY and a random AUTH_SECRET
    ```
 3. **Start MongoDB** — pick one:
    ```bash
@@ -47,7 +47,7 @@ Each seeded patient has a medical background record and 24 pain logs spread over
 - `lib/session.ts`, `lib/auth.ts` — HMAC-signed session cookie, scrypt password hashes, API role checks.
 - `app/api/record` — patient medical context (admin creates/edits; creating a patient also creates their login).
 - `app/api/log` — pain logs (patients only ever see their own).
-- `app/api/chat` — sends the conversation + patient context to OpenRouter; when the model returns a complete log it is saved to MongoDB.
+- `app/api/chat` — sends the conversation + patient context to OpenAI; when the model returns a complete log it is saved to MongoDB.
 - `scripts/seed.mjs` — demo data. Body part names match the meshes in `public/models/human.fbx` so they highlight on the 3D model.
 
-Change the model with `OPENROUTER_MODEL` in `.env.local` (e.g. a specific `...:free` model) if the free router is slow or rate-limited.
+Change the model with `OPENAI_MODEL` in `.env.local`.
